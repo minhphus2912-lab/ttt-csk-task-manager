@@ -1,0 +1,1188 @@
+/**
+ * ============================================================================
+ *  QUẢN LÝ NHÂN SỰ & CÔNG VIỆC — TRUNG TÂM TRUYỀN THÔNG - TỔ CHỨC SỰ KIỆN
+ *  Backend Google Apps Script (Web App) — lưu trữ trên Google Sheets
+ * ----------------------------------------------------------------------------
+ *  Kiến trúc:
+ *   - Deploy: Execute as ME (USER_DEPLOYING) + Who has access: ANYONE/ANONYMOUS
+ *     => người dùng KHÔNG cần đăng nhập Google. Tự quản lý phiên bằng token.
+ *   - doGet trả HtmlOutput + setXFrameOptionsMode(ALLOWALL) để nhúng Google Sites.
+ *   - MỌI kiểm tra quyền nằm ở SERVER (client chỉ là UI, không phải hàng rào).
+ *   - Ngày giờ truyền qua google.script.run dưới dạng CHUỖI ISO (không truyền Date).
+ *   - Timezone cố định Asia/Ho_Chi_Minh (không DST) — luôn dùng offset +07:00.
+ *   - Sinh mã trong LockService, counter monotonic theo ngày/dự án (đọc từ sheet).
+ *
+ *  CÁC HÀM GỌI TỪ CLIENT (google.script.run):
+ *   bootstrap, login, logout, getState,
+ *   createTask, transitionTask, updateTaskNote,
+ *   createProject, updateProject, completeProject,
+ *   upsertMember, setKpiTarget, changePassword, aiGenerate
+ *
+ *  CHẠY MỘT LẦN: runSetup() hoặc runSetupWithDemo()  (xem Setup.gs)
+ * ============================================================================
+ */
+
+// ---------------------------------------------------------------------------
+// Hằng số
+// ---------------------------------------------------------------------------
+var TZ = 'Asia/Ho_Chi_Minh';
+
+var SH_MEMBERS = 'Members';
+var SH_TASKS   = 'Tasks';
+var SH_PROJECTS = 'Projects';
+var SH_KPI     = 'KpiTargets';
+var SH_CONFIG  = 'Config';
+
+var ROLE = {
+  HEAD: 'TRUONG_PHONG', DEPUTY: 'PHO_PHONG', STAFF: 'CHUYEN_VIEN',
+  LEAD: 'LEAD_PROD', QUAY: 'SUBLEAD_QUAY', CHUP: 'SUBLEAD_CHUP', MEMBER: 'THANH_VIEN'
+};
+var ALL_ROLES = [ROLE.HEAD, ROLE.DEPUTY, ROLE.STAFF, ROLE.LEAD, ROLE.QUAY, ROLE.CHUP, ROLE.MEMBER];
+// Production Crew: vai trò thuộc crew, vai trò được QUẢN LÝ crew, vai trò được XEM crew.
+// "Thành viên" (MEMBER) là vai trò crew CƠ BẢN: chỉ làm task của mình, KHÔNG quản lý.
+var CREW_ROLES = [ROLE.LEAD, ROLE.QUAY, ROLE.CHUP, ROLE.MEMBER];
+var CREW_MGR_ROLES = [ROLE.HEAD, ROLE.DEPUTY, ROLE.LEAD, ROLE.QUAY, ROLE.CHUP];
+var CREW_VIEW_ROLES = [ROLE.HEAD, ROLE.DEPUTY, ROLE.LEAD, ROLE.QUAY, ROLE.CHUP, ROLE.MEMBER];
+
+var STATUS = {
+  TODO:    'Chưa bắt đầu',
+  RUNNING: 'Đang chạy',
+  PENDING: 'Tạm dừng',
+  SENT:    'Đã gửi',
+  DONE:    'Hoàn thành'
+};
+var STATUS_ORDER = [STATUS.TODO, STATUS.RUNNING, STATUS.PENDING, STATUS.SENT, STATUS.DONE];
+
+var PRIORITY_ORDER = ['Thấp', 'Bình thường', 'Cao', 'Khẩn cấp'];
+
+var PROJ_STATUS = { ACTIVE: 'Đang thực hiện', COMPLETED: 'Đã hoàn thành' };
+
+// Thứ tự cột — KHÔNG đổi nếu đã có dữ liệu. Thêm cột mới ở CUỐI.
+var MEMBER_COLS = ['code', 'name', 'pinHash', 'role', 'title', 'active', 'createdAt', 'grants', 'avatar'];
+// Quyền có thể GIAO thêm (ngoài vai trò). Mở rộng được trong tương lai.
+var GRANT_KEYS = ['MANAGE_CREW'];
+var TASK_COLS = ['taskCode', 'title', 'description', 'assigneeCode', 'difficulty',
+                 'kpiPoint', 'status', 'createdBy', 'createdAt', 'deadline',
+                 'startedAt', 'submittedAt', 'completedAt', 'reportLink', 'note',
+                 'priority', 'pauseHours', 'lastPausedAt', 'projectId', 'crewTask'];
+var PROJECT_COLS = ['id', 'name', 'leadCode', 'memberCodes', 'eventDate', 'status', 'createdAt'];
+var KPI_COLS = ['memberCode', 'target'];
+
+var DIFFICULTY_ORDER = ['Dễ', 'Bình thường', 'Nâng cao', 'Khó'];
+var DIFFICULTY_CONFIG_KEY = {
+  'Dễ': 'KPI_De', 'Bình thường': 'KPI_BinhThuong',
+  'Nâng cao': 'KPI_NangCao', 'Khó': 'KPI_Kho'
+};
+var DIFFICULTY_DEFAULT = { 'Dễ': 1, 'Bình thường': 2, 'Nâng cao': 3, 'Khó': 4 };
+
+var SESSION_TTL = 21600; // 6 giờ (giới hạn CacheService)
+
+// ---------------------------------------------------------------------------
+// Phục vụ giao diện
+// ---------------------------------------------------------------------------
+function doGet(e) {
+  return HtmlService.createTemplateFromFile('Index')
+    .evaluate()
+    .setTitle('Quản lý công việc — Trung Tâm Truyền Thông - Tổ Chức Sự Kiện')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/** Cho phép tách CSS/JS ra file riêng và chèn nguyên văn vào Index.html */
+function include(name) {
+  return HtmlService.createHtmlOutputFromFile(name).getContent();
+}
+
+// ---------------------------------------------------------------------------
+// Tiện ích chung
+// ---------------------------------------------------------------------------
+function getSS_() {
+  var id = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
+  return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActive();
+}
+
+var KNOWN_SHEETS = [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG];
+function getSheet_(name) {
+  var ss = getSS_();
+  var sh = ss.getSheetByName(name);
+  if (!sh && KNOWN_SHEETS.indexOf(name) >= 0) {
+    // Tự khởi tạo lần đầu (KHÔNG nạp dữ liệu mẫu) để web app chạy được ngay sau khi deploy,
+    // kể cả khi chưa chạy runSetup thủ công. Tạo bảng + cấu hình + tài khoản TP01.
+    setup_(false);
+    sh = ss.getSheetByName(name);
+  }
+  if (!sh) throw err_('Chưa khởi tạo bảng "' + name + '". Hãy chạy hàm runSetup() một lần trong trình chỉnh sửa Apps Script.');
+  return sh;
+}
+
+function err_(msg) { return new Error(msg); }
+function uuid_() { return Utilities.getUuid(); }
+
+/** Chuỗi ISO thời điểm hiện tại theo giờ VN, vd "2026-06-19T14:30:00+07:00" */
+function nowIso_() {
+  return Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd'T'HH:mm:ss") + '+07:00';
+}
+/** Ngày hôm nay theo giờ VN, "yyyy-MM-dd" */
+function todayYmd_() { return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'); }
+
+/** Google Sheets TỰ ĐỘNG ép chuỗi ngày ("2026-09-05") thành đối tượng Date khi ghi.
+ *  Khi đọc lại sẽ là Date -> String(Date) ra "Sat Sep 05 2026..." làm hỏng parse ở client.
+ *  Helper này chuẩn hoá: Date -> chuỗi đúng định dạng; chuỗi/khác -> giữ nguyên. */
+function isDateObj_(v) { return Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v.getTime()); }
+function cellToDateStr_(v, withTime) {
+  if (v === '' || v === null || v === undefined) return '';
+  if (isDateObj_(v)) {
+    return withTime ? (Utilities.formatDate(v, TZ, "yyyy-MM-dd'T'HH:mm:ss") + '+07:00')
+                    : Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
+  }
+  return String(v);
+}
+
+function normalizeDate_(s) {
+  s = String(s || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
+
+function hashPin_(pin) {
+  var raw = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256, 'pttt::' + String(pin), Utilities.Charset.UTF_8);
+  return Utilities.base64Encode(raw);
+}
+
+// ---------------------------------------------------------------------------
+// Cấu hình (Config sheet) — có cache
+// ---------------------------------------------------------------------------
+function readConfig_() {
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get('CONFIG');
+  if (cached) return JSON.parse(cached);
+
+  var sh = getSheet_(SH_CONFIG);
+  var values = sh.getDataRange().getValues();
+  var cfg = {};
+  for (var i = 1; i < values.length; i++) {
+    var k = String(values[i][0]).trim();
+    if (k) cfg[k] = values[i][1];
+  }
+  cache.put('CONFIG', JSON.stringify(cfg), 300);
+  return cfg;
+}
+
+function getConfigValue_(key, fallback) {
+  var cfg = readConfig_();
+  return (cfg[key] !== undefined && cfg[key] !== '') ? cfg[key] : fallback;
+}
+
+function difficultyPoints_() {
+  var cfg = readConfig_();
+  var map = {};
+  DIFFICULTY_ORDER.forEach(function (label) {
+    var v = Number(cfg[DIFFICULTY_CONFIG_KEY[label]]);
+    map[label] = isNaN(v) ? DIFFICULTY_DEFAULT[label] : v;
+  });
+  return map;
+}
+
+function difficultyList_() {
+  var pts = difficultyPoints_();
+  return DIFFICULTY_ORDER.map(function (label) { return { label: label, points: pts[label] }; });
+}
+
+function clearConfigCache() { CacheService.getScriptCache().remove('CONFIG'); }
+
+// ---------------------------------------------------------------------------
+// Thành viên (Members sheet)
+// ---------------------------------------------------------------------------
+function readMembers_() {
+  var sh = getSheet_(SH_MEMBERS);
+  var values = sh.getDataRange().getValues();
+  var out = [];
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    if (!String(row[0]).trim()) continue;
+    out.push({
+      code: String(row[0]).trim(),
+      name: String(row[1]).trim(),
+      pinHash: String(row[2]),
+      role: String(row[3]).trim(),
+      title: String(row[4]).trim(),
+      active: row[5] === true || String(row[5]).toUpperCase() === 'TRUE',
+      createdAt: String(row[6] || ''),
+      grants: parseGrants_(row[7]),
+      avatar: String(row[8] || '')
+    });
+  }
+  return out;
+}
+
+function parseGrants_(raw) {
+  raw = String(raw == null ? '' : raw).trim();
+  if (!raw) return [];
+  try { var a = JSON.parse(raw); return Array.isArray(a) ? a : []; }
+  catch (e) { return raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean); }
+}
+
+function publicMember_(m) {
+  if (!m) return null;
+  return { code: m.code, name: m.name, role: m.role, title: m.title, active: m.active, grants: m.grants || [], avatar: m.avatar || '' };
+}
+
+// ---------------------------------------------------------------------------
+// Phiên đăng nhập (tự quản lý — KHÔNG dựa Google session)
+// ---------------------------------------------------------------------------
+function login(memberCode, pin) {
+  var members = readMembers_();
+  var code = String(memberCode).trim().toUpperCase();
+  var m = members.filter(function (x) { return x.code.toUpperCase() === code && x.active; })[0];
+  if (!m) throw err_('Tài khoản không tồn tại hoặc đã bị khóa.');
+  if (m.pinHash !== hashPin_(pin)) throw err_('Mã cá nhân (PIN) không đúng.');
+
+  var token = uuid_();
+  CacheService.getScriptCache().put('S_' + token, m.code, SESSION_TTL);
+  return { token: token, user: publicMember_(m) };
+}
+
+/** Lấy người dùng từ token; LUÔN đọc lại vai trò từ DB để bảo đảm chính xác. */
+function getUser_(token) {
+  if (!token) return null;
+  var cache = CacheService.getScriptCache();
+  var code = cache.get('S_' + token);
+  if (!code) return null;
+  cache.put('S_' + token, code, SESSION_TTL); // gia hạn
+  var m = readMembers_().filter(function (x) { return x.code === code && x.active; })[0];
+  return m ? publicMember_(m) : null;
+}
+
+function requireUser_(token) {
+  var u = getUser_(token);
+  if (!u) throw err_('SESSION_EXPIRED');
+  return u;
+}
+function isManager_(u) { return u.role === ROLE.HEAD || u.role === ROLE.DEPUTY; }
+function isHead_(u) { return u.role === ROLE.HEAD; }
+function isCrewRole_(role) { return CREW_ROLES.indexOf(role) >= 0; }
+function hasGrant_(u, key) { return !!(u && u.grants && u.grants.indexOf(key) >= 0); }
+// Quản lý Production Crew = Trưởng/Phó phòng + Lead/Sub-Lead crew + người được GIAO quyền MANAGE_CREW. ("Thành viên" KHÔNG quản lý.)
+function canManageCrew_(u) { return CREW_MGR_ROLES.indexOf(u.role) >= 0 || hasGrant_(u, 'MANAGE_CREW'); }
+function canViewCrew_(u) { return canManageCrew_(u) || isCrewRole_(u.role); }
+// "Trưởng" của crew: quản trị toàn bộ crew (không bị giới hạn theo cấp). = Trưởng/Phó phòng + người được giao MANAGE_CREW.
+function isCrewAdmin_(u) { return isManager_(u) || hasGrant_(u, 'MANAGE_CREW'); }
+// Phạm vi xem dữ liệu PHÒNG: all (Trưởng phòng) / allButHigher (Phó phòng) / own (Chuyên viên) / none (vai trò thuần crew).
+function deptScopeOf_(role) {
+  if (role === ROLE.HEAD) return 'all';
+  if (role === ROLE.DEPUTY) return 'allButHigher';
+  if (role === ROLE.STAFF) return 'own';
+  return 'none';
+}
+function hasDeptBoard_(role) { return deptScopeOf_(role) !== 'none'; }
+function requireCrewManager_(token) {
+  var u = requireUser_(token);
+  if (!canManageCrew_(u)) throw err_('Bạn không có quyền quản lý Production Crew.');
+  return u;
+}
+// Ai được SỬA/XOÁ một task: task crew -> quản lý crew; còn lại -> Trưởng/Phó phòng.
+function canManageTask_(u, t) { return t.crewTask ? canManageCrew_(u) : isManager_(u); }
+
+// Phân cấp hiển thị: số NHỎ = cấp CAO. Vai trò thấp KHÔNG xem được thông tin vai trò cao.
+// Hai "silo" độc lập: Phòng (HEAD/DEPUTY/STAFF) và Production Crew (LEAD/QUAY/CHUP/MEMBER).
+var ROLE_RANK = {
+  TRUONG_PHONG: 0, PHO_PHONG: 1, CHUYEN_VIEN: 2,
+  LEAD_PROD: 0, SUBLEAD_QUAY: 1, SUBLEAD_CHUP: 1, THANH_VIEN: 3
+};
+function rankOf_(role) { var r = ROLE_RANK[role]; return (r === undefined) ? 9 : r; }
+function siloOf_(role) { return isCrewRole_(role) ? 'crew' : 'dept'; }
+// So sánh thứ bậc CHỈ trong cùng silo (khác silo = không so sánh authority).
+function outranksWithinSilo_(viewerRole, targetRole) {
+  return siloOf_(viewerRole) === siloOf_(targetRole) && rankOf_(targetRole) < rankOf_(viewerRole);
+}
+function requireManager_(token) {
+  var u = requireUser_(token);
+  if (!isManager_(u)) throw err_('Chỉ Trưởng phòng / Phó phòng mới có quyền thực hiện thao tác này.');
+  return u;
+}
+function requireHead_(token) {
+  var u = requireUser_(token);
+  if (!isHead_(u)) throw err_('Chỉ Trưởng phòng mới có quyền thực hiện thao tác này.');
+  return u;
+}
+function logout(token) {
+  if (token) CacheService.getScriptCache().remove('S_' + token);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Công việc (Tasks sheet)
+// ---------------------------------------------------------------------------
+function taskObjFromRow_(row) {
+  var o = {};
+  TASK_COLS.forEach(function (c, i) { o[c] = (row[i] === undefined || row[i] === null) ? '' : row[i]; });
+  o.kpiPoint = Number(o.kpiPoint) || 0;
+  o.pauseHours = Number(o.pauseHours) || 0;
+  o.crewTask = (o.crewTask === true || String(o.crewTask).toUpperCase() === 'TRUE');
+  var dateOnly = { deadline: 1 };
+  var dateTime = { createdAt: 1, startedAt: 1, submittedAt: 1, completedAt: 1, lastPausedAt: 1 };
+  ['taskCode', 'title', 'description', 'assigneeCode', 'difficulty', 'status',
+   'createdBy', 'createdAt', 'deadline', 'startedAt', 'submittedAt', 'completedAt',
+   'reportLink', 'note', 'priority', 'lastPausedAt', 'projectId']
+    .forEach(function (c) {
+      if (dateOnly[c]) o[c] = cellToDateStr_(o[c], false);
+      else if (dateTime[c]) o[c] = cellToDateStr_(o[c], true);
+      else o[c] = String(o[c]);
+    });
+  if (!o.projectId) o.projectId = null;
+  return o;
+}
+function taskToRow_(t) {
+  return TASK_COLS.map(function (c) {
+    var v = t[c];
+    if (v === undefined || v === null) return '';
+    return v;
+  });
+}
+function readTasks_() {
+  var sh = getSheet_(SH_TASKS);
+  var values = sh.getDataRange().getValues();
+  var out = [];
+  for (var i = 1; i < values.length; i++) {
+    if (!String(values[i][0]).trim()) continue;
+    out.push(taskObjFromRow_(values[i]));
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Dự án (Projects sheet)
+// ---------------------------------------------------------------------------
+function projObjFromRow_(row) {
+  var memberCodes = [];
+  try {
+    var raw = String(row[3] || '').trim();
+    if (raw) memberCodes = raw.charAt(0) === '[' ? JSON.parse(raw) : raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  } catch (e) { memberCodes = []; }
+  return {
+    id: String(row[0] || '').trim(),
+    name: String(row[1] || '').trim(),
+    leadCode: String(row[2] || '').trim(),
+    memberCodes: memberCodes,
+    eventDate: cellToDateStr_(row[4], false),
+    status: String(row[5] || '').trim() || PROJ_STATUS.ACTIVE,
+    createdAt: cellToDateStr_(row[6], true)
+  };
+}
+function projToRow_(p) {
+  return [p.id, p.name, p.leadCode, JSON.stringify(p.memberCodes || []),
+          p.eventDate || '', p.status || PROJ_STATUS.ACTIVE, p.createdAt || nowIso_()];
+}
+function readProjects_() {
+  var sh = getSheet_(SH_PROJECTS);
+  var values = sh.getDataRange().getValues();
+  var out = [];
+  for (var i = 1; i < values.length; i++) {
+    if (!String(values[i][0]).trim()) continue;
+    out.push(projObjFromRow_(values[i]));
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Mục tiêu KPI (KpiTargets sheet)
+// ---------------------------------------------------------------------------
+function readKpiTargets_() {
+  var sh = getSheet_(SH_KPI);
+  var values = sh.getDataRange().getValues();
+  var out = {};
+  for (var i = 1; i < values.length; i++) {
+    var c = String(values[i][0] || '').trim();
+    if (!c) continue;
+    out[c] = Number(values[i][1]) || 0;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// API: bootstrap & getState
+// ---------------------------------------------------------------------------
+/** Dữ liệu công khai cho màn hình đăng nhập (KHÔNG chứa pin). */
+// Tăng MIG_VERSION mỗi khi cần migrate_() chạy lại trên dữ liệu ĐÃ deploy.
+// v12: thêm cột avatar, MULTIMEDIA -> THANH_VIEN, đổi tên đơn vị.
+var MIG_VERSION = '12';
+function ensureMigrated_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (props.getProperty('MIG_VERSION') === MIG_VERSION) return;
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(8000)) return; // có tiến trình khác đang chạy -> để lần sau
+    try {
+      if (props.getProperty('MIG_VERSION') === MIG_VERSION) return; // kiểm tra lại trong lock
+      migrate_();
+      props.setProperty('MIG_VERSION', MIG_VERSION);
+    } finally { lock.releaseLock(); }
+  } catch (e) { Logger.log('ensureMigrated_ lỗi: ' + e); } // không chặn app nếu migrate lỗi
+}
+
+function bootstrap() {
+  // KHÔNG trả danh sách nhân sự ở màn hình đăng nhập (tránh lộ toàn bộ roster trước khi xác thực).
+  // Đăng nhập bằng cách NHẬP mã + PIN (không chọn từ dropdown).
+  ensureMigrated_(); // chạy migrate_ MỘT LẦN sau mỗi lần deploy (kể cả khi bảng đã tồn tại sẵn).
+  return {
+    departmentName: getConfigValue_('DepartmentName', 'Trung Tâm Truyền Thông - Tổ Chức Sự Kiện'),
+    difficulties: difficultyList_(),
+    statuses: STATUS_ORDER,
+    members: []
+  };
+}
+
+/**
+ * Trạng thái sau khi đăng nhập. Manager thấy toàn bộ; chuyên viên chỉ thấy việc
+ * và dự án của mình. Danh sách members trả về đủ để client hiển thị TÊN cho mọi
+ * mã xuất hiện trong dữ liệu mà người dùng được phép thấy.
+ */
+function getState(token) {
+  var u = requireUser_(token);
+  var allTasks = readTasks_();
+  var allProjects = readProjects_();
+  var allMembers = readMembers_();
+
+  var urank = rankOf_(u.role);
+  var dScope = deptScopeOf_(u.role);   // all / allButHigher / own / none
+  var crewAll = canManageCrew_(u);     // thấy & quản lý TOÀN BỘ crew
+  var crewOwn = !crewAll && isCrewRole_(u.role); // crew non-manager: chỉ việc của mình
+
+  var roleByCode = {};
+  allMembers.forEach(function (m) { roleByCode[m.code] = m.role; });
+  function aRank(t) { var r = roleByCode[t.assigneeCode]; return (r === undefined) ? 9 : rankOf_(r); }
+  function aIsCrew(t) { return isCrewRole_(roleByCode[t.assigneeCode]); }
+
+  // ----- TASKS = (việc Phòng theo dScope) + (việc Crew theo quyền crew) -----
+  var deptTasks = [];
+  if (dScope === 'all') deptTasks = allTasks.filter(function (t) { return !t.crewTask; });
+  else if (dScope === 'allButHigher') deptTasks = allTasks.filter(function (t) { return !t.crewTask && aRank(t) >= urank; });
+  else if (dScope === 'own') deptTasks = allTasks.filter(function (t) { return !t.crewTask && t.assigneeCode === u.code; });
+  var crewTasksArr = [];
+  if (crewAll) crewTasksArr = allTasks.filter(function (t) { return t.crewTask && aIsCrew(t); });
+  else if (crewOwn) crewTasksArr = allTasks.filter(function (t) { return t.crewTask && t.assigneeCode === u.code; });
+  var tasks = deptTasks.concat(crewTasksArr);
+
+  // ----- PROJECTS (chỉ thuộc Phòng) -----
+  var projects;
+  if (dScope === 'all' || dScope === 'allButHigher') projects = allProjects;
+  else if (dScope === 'own') projects = allProjects.filter(function (p) { return p.leadCode === u.code || (p.memberCodes || []).indexOf(u.code) >= 0; });
+  else projects = [];
+
+  // ----- MEMBERS (chỉ những người viewer được phép thấy) -----
+  var allow = {}; allow[u.code] = true;
+  if (dScope === 'all') allMembers.forEach(function (m) { if (!isCrewRole_(m.role)) allow[m.code] = true; });
+  else if (dScope === 'allButHigher') allMembers.forEach(function (m) { if (!isCrewRole_(m.role) && rankOf_(m.role) >= urank) allow[m.code] = true; });
+  else if (dScope === 'own') {
+    var ref = {};
+    projects.forEach(function (p) { ref[p.leadCode] = 1; (p.memberCodes || []).forEach(function (c) { ref[c] = 1; }); });
+    deptTasks.forEach(function (t) { if (t.assigneeCode) ref[t.assigneeCode] = 1; });
+    allMembers.forEach(function (m) { if (ref[m.code] && !isCrewRole_(m.role) && rankOf_(m.role) >= urank) allow[m.code] = true; });
+  }
+  if (crewAll) allMembers.forEach(function (m) { if (isCrewRole_(m.role)) allow[m.code] = true; });
+  var members = allMembers.filter(function (m) { return allow[m.code]; }).map(publicMember_);
+
+  // KPI targets: CHỈ trả về mục tiêu của những người mà viewer được phép thấy (tránh lộ KPI cấp cao / silo khác).
+  var allowed = {}; members.forEach(function (m) { allowed[m.code] = true; });
+  var allKpi = readKpiTargets_(); var kpiTargets = {};
+  Object.keys(allKpi).forEach(function (c) { if (allowed[c]) kpiTargets[c] = allKpi[c]; });
+
+  return {
+    user: u,
+    tasks: tasks,
+    projects: projects,
+    members: members,
+    config: {
+      departmentName: getConfigValue_('DepartmentName', 'Trung Tâm Truyền Thông - Tổ Chức Sự Kiện'),
+      difficulties: difficultyList_(),
+      statuses: STATUS_ORDER
+    },
+    kpiTargets: kpiTargets
+  };
+}
+
+// ---------------------------------------------------------------------------
+// API: Công việc
+// ---------------------------------------------------------------------------
+/**
+ * Tạo công việc — chỉ Trưởng/Phó phòng.
+ * Mã = "<PREFIX>-<SEQ>-<MEMBERCODE>": PREFIX = yyyyMMdd (việc daily) hoặc
+ * phần số của projectId (việc dự án). SEQ monotonic theo PREFIX, tính từ sheet.
+ */
+function createTask(token, payload) {
+  payload = payload || {};
+  var crewTask = !!payload.crewTask;
+  var u = requireUser_(token);
+  // Quyền tạo việc:
+  //  - Task crew: cần quyền quản lý crew (Trưởng/Phó phòng + Lead/Sub-Lead + người được giao MANAGE_CREW).
+  //  - Task daily/dự án: Trưởng/Phó phòng giao cho ai cũng được; CHUYÊN VIÊN được TỰ giao việc cho CHÍNH MÌNH.
+  //    (Thành viên Production Crew KHÔNG có bảng Phòng nên không lọt vào nhánh này.)
+  var selfCreate = false;
+  if (crewTask) {
+    if (!canManageCrew_(u)) throw err_('Bạn không có quyền quản lý Production Crew.');
+  } else if (!isManager_(u)) {
+    if (deptScopeOf_(u.role) !== 'own') throw err_('Chỉ Trưởng phòng / Phó phòng mới có quyền thực hiện thao tác này.');
+    selfCreate = true;
+    if (String(payload.assigneeCode).trim() !== u.code) throw err_('Chuyên viên chỉ được tự giao việc cho chính mình.');
+  }
+
+  var members = readMembers_();
+  var assignee = members.filter(function (m) {
+    return m.code === String(payload.assigneeCode).trim() && m.active;
+  })[0];
+  if (!assignee) throw err_('Người được giao việc không hợp lệ.');
+  if (crewTask && !isCrewRole_(assignee.role)) throw err_('Chỉ giao task crew cho thành viên thuộc Production Crew.');
+  if (!crewTask && !hasDeptBoard_(assignee.role)) throw err_('Việc của Phòng chỉ giao cho nhân sự có mặt ở Phòng.');
+  if (outranksWithinSilo_(u.role, assignee.role)) throw err_('Không thể giao việc cho người có vai trò cao hơn.');
+
+  var difficulty = String(payload.difficulty || '').trim();
+  var points = difficultyPoints_()[difficulty];
+  if (points === undefined) throw err_('Độ khó không hợp lệ.');
+
+  var title = String(payload.title || '').trim();
+  if (!title) throw err_('Vui lòng nhập tên công việc.');
+
+  var projectId = String(payload.projectId || '').trim();
+  if (projectId) {
+    var prj = readProjects_().filter(function (p) { return p.id === projectId; })[0];
+    if (!prj) throw err_('Dự án không tồn tại.');
+    // Chuyên viên tự tạo việc trong dự án: phải là Lead hoặc thành viên của dự án đó.
+    if (selfCreate && prj.leadCode !== u.code && (prj.memberCodes || []).indexOf(u.code) < 0) {
+      throw err_('Bạn không thuộc dự án này.');
+    }
+  }
+
+  var deadline = normalizeDate_(payload.deadline);
+  var description = String(payload.description || '').trim();
+  var note = String(payload.note || '').trim();
+
+  var priority = String(payload.priority || '').trim();
+  if (PRIORITY_ORDER.indexOf(priority) < 0) priority = 'Bình thường';
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var prefix = projectId ? projectId.replace('PRJ-', '') : (crewTask ? 'CREW' : Utilities.formatDate(new Date(), TZ, 'yyyyMMdd'));
+    var tSheet = getSheet_(SH_TASKS);
+    var codes = tSheet.getDataRange().getValues();
+    var maxSeq = 0;
+    for (var i = 1; i < codes.length; i++) {
+      var parts = String(codes[i][0]).split('-');
+      // mã có thể là "yyyyMMdd-SEQ-CODE" hoặc "2026-001-SEQ-CODE" (PRJ-2026-001)
+      var c0 = String(codes[i][0]);
+      if (c0.indexOf(prefix + '-') === 0) {
+        var rest = c0.substring(prefix.length + 1).split('-');
+        var n = Number(rest[0]);
+        if (!isNaN(n) && n > maxSeq) maxSeq = n;
+      }
+    }
+    var seq = maxSeq + 1;
+    var code = prefix + '-' + ('00' + seq).slice(-3) + '-' + assignee.code;
+
+    var task = {
+      taskCode: code, title: title, description: description,
+      assigneeCode: assignee.code, difficulty: difficulty, kpiPoint: points,
+      status: STATUS.TODO, createdBy: u.code, createdAt: nowIso_(),
+      deadline: deadline, startedAt: '', submittedAt: '', completedAt: '',
+      reportLink: '', note: note, priority: priority,
+      pauseHours: 0, lastPausedAt: '', projectId: projectId || '', crewTask: crewTask
+    };
+    tSheet.appendRow(taskToRow_(task));
+    task.projectId = projectId || null;
+    return task;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Chuyển trạng thái công việc.
+ *  start:Chưa bắt đầu→Đang chạy | pause:Đang chạy→Tạm dừng |
+ *  resume:Tạm dừng→Đang chạy | submit:Đang chạy→Đã gửi | complete:Đã gửi→Hoàn thành
+ * Link báo cáo là TÙY CHỌN (khớp giao diện mới). Mọi kiểm tra ở SERVER.
+ */
+function transitionTask(token, taskCode, action, reportLink) {
+  var u = requireUser_(token);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_TASKS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1, matches = 0;
+    for (var i = 1; i < values.length; i++) {
+      if (String(values[i][0]) === String(taskCode)) { matches++; if (rowIdx < 0) rowIdx = i; }
+    }
+    if (rowIdx < 0) throw err_('Không tìm thấy công việc.');
+    if (matches > 1) throw err_('Dữ liệu trùng mã công việc, vui lòng liên hệ quản trị.');
+
+    var t = taskObjFromRow_(values[rowIdx]);
+    // CHỈ người được giao việc mới thao tác được; manager/khác KHÔNG có quyền.
+    if (t.assigneeCode !== u.code) throw err_('Chỉ người được giao việc mới có quyền thao tác trên công việc này.');
+
+    var now = nowIso_();
+    if (action === 'start') {
+      if (t.status !== STATUS.TODO) throw err_('Chỉ bắt đầu được công việc "Chưa bắt đầu".');
+      t.status = STATUS.RUNNING; t.startedAt = now;
+    } else if (action === 'pause') {
+      if (t.status !== STATUS.RUNNING) throw err_('Chỉ tạm hoãn được công việc "Đang chạy".');
+      t.status = STATUS.PENDING; t.lastPausedAt = now;
+    } else if (action === 'resume') {
+      if (t.status !== STATUS.PENDING) throw err_('Chỉ tiếp tục được công việc "Tạm dừng".');
+      t.status = STATUS.RUNNING;
+      if (t.lastPausedAt) {
+        var dp = Date.parse(t.lastPausedAt);
+        if (!isNaN(dp)) t.pauseHours = (t.pauseHours || 0) + Math.max(0, (Date.parse(now) - dp) / 3600000);
+        t.lastPausedAt = '';
+      }
+    } else if (action === 'submit') {
+      if (t.status !== STATUS.RUNNING) throw err_('Chỉ gửi báo cáo khi công việc "Đang chạy".');
+      t.status = STATUS.SENT; t.submittedAt = now;
+      t.reportLink = String(reportLink || '').trim();
+    } else if (action === 'complete') {
+      if (t.status !== STATUS.SENT) throw err_('Chỉ xác nhận hoàn thành khi công việc "Đã gửi".');
+      t.status = STATUS.DONE; t.completedAt = now;
+    } else {
+      throw err_('Hành động không hợp lệ.');
+    }
+
+    var newRow = taskToRow_(t);
+    sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
+    t.projectId = t.projectId || null;
+    return t;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Cập nhật ghi chú của công việc (assignee hoặc manager). */
+function updateTaskNote(token, taskCode, note) {
+  var u = requireUser_(token);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_TASKS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) {
+      if (String(values[i][0]) === String(taskCode)) { rowIdx = i; break; }
+    }
+    if (rowIdx < 0) throw err_('Không tìm thấy công việc.');
+    var t = taskObjFromRow_(values[rowIdx]);
+    if (t.assigneeCode !== u.code) throw err_('Chỉ người được giao việc mới có quyền sửa ghi chú công việc này.');
+    t.note = String(note || '');
+    var newRow = taskToRow_(t);
+    sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Sửa thông tin task (title/desc/assignee/difficulty/priority/deadline/note). Giữ nguyên trạng thái & timestamps. */
+function updateTask(token, taskCode, payload) {
+  var u = requireUser_(token);
+  payload = payload || {};
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_TASKS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) { if (String(values[i][0]) === String(taskCode)) { rowIdx = i; break; } }
+    if (rowIdx < 0) throw err_('Không tìm thấy công việc.');
+    var t = taskObjFromRow_(values[rowIdx]);
+    if (!canManageTask_(u, t)) throw err_('Bạn không có quyền sửa công việc này.');
+
+    var title = String(payload.title || '').trim();
+    if (!title) throw err_('Vui lòng nhập tên công việc.');
+    var assignee = readMembers_().filter(function (m) { return m.code === String(payload.assigneeCode).trim() && m.active; })[0];
+    if (!assignee) throw err_('Người được giao việc không hợp lệ.');
+    if (t.crewTask && !isCrewRole_(assignee.role)) throw err_('Chỉ giao task crew cho thành viên thuộc Production Crew.');
+    if (!t.crewTask && !hasDeptBoard_(assignee.role)) throw err_('Việc của Phòng chỉ giao cho nhân sự có mặt ở Phòng.');
+    if (outranksWithinSilo_(u.role, assignee.role)) throw err_('Không thể giao việc cho người có vai trò cao hơn.');
+    var difficulty = String(payload.difficulty || '').trim();
+    var points = difficultyPoints_()[difficulty];
+    if (points === undefined) throw err_('Độ khó không hợp lệ.');
+    var priority = String(payload.priority || '').trim();
+    if (PRIORITY_ORDER.indexOf(priority) < 0) priority = 'Bình thường';
+
+    t.title = title;
+    t.description = String(payload.description || '').trim();
+    t.assigneeCode = assignee.code;
+    t.difficulty = difficulty;
+    t.kpiPoint = points;
+    t.priority = priority;
+    t.deadline = normalizeDate_(payload.deadline);
+    if (payload.note !== undefined) t.note = String(payload.note || '');
+
+    var newRow = taskToRow_(t);
+    sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
+    t.projectId = t.projectId || null;
+    return t;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Xoá hẳn một task. Quyền: task crew -> quản lý crew; còn lại -> Trưởng/Phó phòng. */
+function deleteTask(token, taskCode) {
+  var u = requireUser_(token);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_TASKS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) { if (String(values[i][0]) === String(taskCode)) { rowIdx = i; break; } }
+    if (rowIdx < 0) throw err_('Không tìm thấy công việc.');
+    var t = taskObjFromRow_(values[rowIdx]);
+    if (!canManageTask_(u, t)) throw err_('Bạn không có quyền xoá công việc này.');
+    sh.deleteRow(rowIdx + 1);
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API: Dự án
+// ---------------------------------------------------------------------------
+function createProject(token, payload) {
+  var u = requireManager_(token);
+  payload = payload || {};
+  var name = String(payload.name || '').trim();
+  if (!name) throw err_('Vui lòng nhập tên dự án.');
+  var leadCode = String(payload.leadCode || '').trim();
+  if (!leadCode) throw err_('Vui lòng chọn Lead dự án.');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_PROJECTS);
+    var existing = readProjects_();
+    var year = Utilities.formatDate(new Date(), TZ, 'yyyy');
+    var maxSeq = 0;
+    existing.forEach(function (p) {
+      var m = /^PRJ-\d{4}-(\d+)$/.exec(p.id);
+      if (m) { var n = Number(m[1]); if (n > maxSeq) maxSeq = n; }
+    });
+    var id = 'PRJ-' + year + '-' + ('00' + (maxSeq + 1)).slice(-3);
+    var prj = {
+      id: id, name: name, leadCode: leadCode,
+      memberCodes: Array.isArray(payload.memberCodes) ? payload.memberCodes : [],
+      eventDate: normalizeDate_(payload.eventDate), status: PROJ_STATUS.ACTIVE, createdAt: nowIso_()
+    };
+    sh.appendRow(projToRow_(prj));
+    return prj;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function updateProject(token, payload) {
+  var u = requireManager_(token);
+  payload = payload || {};
+  var id = String(payload.id || '').trim();
+  if (!id) throw err_('Thiếu mã dự án.');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_PROJECTS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) {
+      if (String(values[i][0]).trim() === id) { rowIdx = i; break; }
+    }
+    if (rowIdx < 0) throw err_('Không tìm thấy dự án.');
+    var p = projObjFromRow_(values[rowIdx]);
+    p.name = String(payload.name || p.name).trim();
+    p.leadCode = String(payload.leadCode || p.leadCode).trim();
+    p.memberCodes = Array.isArray(payload.memberCodes) ? payload.memberCodes : p.memberCodes;
+    p.eventDate = normalizeDate_(payload.eventDate);
+    var newRow = projToRow_(p);
+    sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
+    return p;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function completeProject(token, id) {
+  var u = requireManager_(token);
+  id = String(id || '').trim();
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_PROJECTS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) {
+      if (String(values[i][0]).trim() === id) { rowIdx = i; break; }
+    }
+    if (rowIdx < 0) throw err_('Không tìm thấy dự án.');
+    var p = projObjFromRow_(values[rowIdx]);
+    p.status = PROJ_STATUS.COMPLETED;
+    var newRow = projToRow_(p);
+    sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
+    return p;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Xoá dự án + XOÁ LUÔN mọi task thuộc dự án đó (cascade). Chỉ Trưởng/Phó phòng. */
+function deleteProject(token, id) {
+  var u = requireManager_(token);
+  id = String(id || '').trim();
+  if (!id) throw err_('Thiếu mã dự án.');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var psh = getSheet_(SH_PROJECTS);
+    var pv = psh.getDataRange().getValues();
+    var prowIdx = -1;
+    for (var i = 1; i < pv.length; i++) { if (String(pv[i][0]).trim() === id) { prowIdx = i; break; } }
+    if (prowIdx < 0) throw err_('Không tìm thấy dự án.');
+    psh.deleteRow(prowIdx + 1);
+
+    // cascade: xoá các task có projectId === id (xoá từ dưới lên để không lệch chỉ số)
+    var tsh = getSheet_(SH_TASKS);
+    var tv = tsh.getDataRange().getValues();
+    var pidCol = TASK_COLS.indexOf('projectId'); // 0-based
+    var rowsToDelete = [];
+    for (var j = 1; j < tv.length; j++) { if (String(tv[j][pidCol]).trim() === id) rowsToDelete.push(j + 1); }
+    rowsToDelete.sort(function (a, b) { return b - a; }).forEach(function (r) { tsh.deleteRow(r); });
+    return { ok: true, deletedTasks: rowsToDelete.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API: Nhân sự — Trưởng phòng / Phó phòng
+// ---------------------------------------------------------------------------
+// Mã thành viên có trùng không (so sánh không phân biệt hoa thường, loại trừ exceptCode = dòng đang sửa).
+function memberCodeExists_(values, code, exceptCode) {
+  code = String(code).trim().toUpperCase();
+  exceptCode = String(exceptCode || '').trim().toUpperCase();
+  for (var i = 1; i < values.length; i++) {
+    var c = String(values[i][0]).trim().toUpperCase();
+    if (c && c === code && c !== exceptCode) return true;
+  }
+  return false;
+}
+
+// Đổi MÃ thành viên: cập nhật mọi tham chiếu (task assignee/creator, project lead/members, KPI key).
+// KHÔNG đổi taskCode (mã lịch sử, dùng làm khoá hàng + đếm seq).
+function cascadeMemberCode_(oldCode, newCode) {
+  oldCode = String(oldCode).trim().toUpperCase();
+  newCode = String(newCode).trim();
+  var tSheet = getSheet_(SH_TASKS), tv = tSheet.getDataRange().getValues();
+  for (var i = 1; i < tv.length; i++) {
+    if (String(tv[i][3]).trim().toUpperCase() === oldCode) tSheet.getRange(i + 1, 4).setValue(newCode);   // assigneeCode
+    if (String(tv[i][7]).trim().toUpperCase() === oldCode) tSheet.getRange(i + 1, 8).setValue(newCode);   // createdBy
+  }
+  var pSheet = getSheet_(SH_PROJECTS), pv = pSheet.getDataRange().getValues();
+  for (var j = 1; j < pv.length; j++) {
+    if (String(pv[j][2]).trim().toUpperCase() === oldCode) pSheet.getRange(j + 1, 3).setValue(newCode);   // leadCode
+    var arr = projObjFromRow_(pv[j]).memberCodes, changed = false;
+    for (var k = 0; k < arr.length; k++) { if (String(arr[k]).trim().toUpperCase() === oldCode) { arr[k] = newCode; changed = true; } }
+    if (changed) pSheet.getRange(j + 1, 4).setValue(JSON.stringify(arr));
+  }
+  var kSheet = getSheet_(SH_KPI), kv = kSheet.getDataRange().getValues();
+  for (var m = 1; m < kv.length; m++) {
+    if (String(kv[m][0]).trim().toUpperCase() === oldCode) kSheet.getRange(m + 1, 1).setValue(newCode);   // KPI key
+  }
+}
+
+function upsertMember(token, payload) {
+  var u = requireManager_(token); // Trưởng phòng + Phó phòng
+  payload = payload || {};
+
+  var code = String(payload.code || '').trim().toUpperCase();
+  var origCode = String(payload.origCode || '').trim().toUpperCase();
+  var name = String(payload.name || '').trim();
+  var role = String(payload.role || '').trim();
+  var title = String(payload.title || '').trim();
+  var active = payload.active === undefined ? true : !!payload.active;
+
+  if (!code) throw err_('Vui lòng nhập mã thành viên.');
+  if (!name) throw err_('Vui lòng nhập họ tên.');
+  if (ALL_ROLES.indexOf(role) < 0) throw err_('Vai trò không hợp lệ.');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_MEMBERS);
+    var values = sh.getDataRange().getValues();
+    var lookup = origCode || code; // sửa: tìm theo mã CŨ; tạo: theo mã mới
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) {
+      if (String(values[i][0]).trim().toUpperCase() === lookup) { rowIdx = i; break; }
+    }
+    if (origCode && rowIdx < 0) throw err_('Không tìm thấy thành viên cần sửa.');
+    if (!origCode && rowIdx >= 0) throw err_('Mã thành viên đã tồn tại.');
+    // Mã (mới) KHÔNG được trùng người khác — áp dụng cho cả TẠO và SỬA.
+    if (memberCodeExists_(values, code, origCode)) throw err_('Mã thành viên đã tồn tại.');
+
+    if (rowIdx < 0) {
+      var pin = String(payload.pin || '').trim();
+      if (pin.length < 4) throw err_('Mã cá nhân (PIN) tối thiểu 4 ký tự.');
+      sh.appendRow([code, name, hashPin_(pin), role, title, active, nowIso_(), '[]', '']);
+    } else {
+      var cur = values[rowIdx];
+      var pinHash = String(cur[2]);
+      if (payload.pin !== undefined && String(payload.pin).trim() !== '') {
+        if (String(payload.pin).trim().length < 4) throw err_('Mã cá nhân (PIN) tối thiểu 4 ký tự.');
+        pinHash = hashPin_(String(payload.pin).trim());
+      }
+      var updated = [code, name, pinHash, role, title, active, String(cur[6] || nowIso_()),
+                     (cur[7] === undefined || cur[7] === '') ? '[]' : cur[7], (cur[8] === undefined ? '' : cur[8])]; // giữ avatar (cột 9)
+      sh.getRange(rowIdx + 1, 1, 1, updated.length).setValues([updated]);
+      // Đổi MÃ -> cascade mọi tham chiếu + sửa phiên của chính người gọi nếu họ tự đổi mã.
+      if (origCode && code !== origCode) {
+        cascadeMemberCode_(origCode, code);
+        if (origCode === String(u.code).toUpperCase()) {
+          CacheService.getScriptCache().put('S_' + token, code, SESSION_TTL);
+        }
+      }
+    }
+    return { ok: true, code: code, member: { code: code, name: name, role: role, title: title, active: active } };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API: Vai trò Production Crew — Trưởng/Phó phòng + Lead/Sub-Lead
+// Gán/gỡ thành viên vào crew bằng cách đổi role sang vai trò crew (hoặc về Chuyên viên).
+// ---------------------------------------------------------------------------
+function setCrewRole(token, memberCode, crewRole) {
+  var u = requireCrewManager_(token);
+  var code = String(memberCode || '').trim().toUpperCase();
+  if (!code) throw err_('Thiếu mã thành viên.');
+  var newRole = String(crewRole || '').trim();
+  if (newRole && CREW_ROLES.indexOf(newRole) < 0) throw err_('Vai trò Production Crew không hợp lệ.');
+  if (!newRole) newRole = ROLE.STAFF; // rỗng = gỡ khỏi crew
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_MEMBERS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) {
+      if (String(values[i][0]).trim().toUpperCase() === code) { rowIdx = i; break; }
+    }
+    if (rowIdx < 0) throw err_('Không tìm thấy thành viên.');
+    var curRole = String(values[rowIdx][3]).trim();
+    if (curRole === ROLE.HEAD || curRole === ROLE.DEPUTY) throw err_('Không thể đổi vai trò của Trưởng/Phó phòng tại đây.');
+    if (!isManager_(u) && !isCrewRole_(curRole)) throw err_('Chỉ Trưởng/Phó phòng mới được đưa người của Phòng vào Production Crew.');
+    if (!isCrewAdmin_(u) && rankOf_(curRole) <= rankOf_(u.role)) throw err_('Chỉ được đổi vai trò thành viên crew có cấp thấp hơn bạn.');
+    sh.getRange(rowIdx + 1, 4).setValue(newRole); // cột 'role' (cột thứ 4)
+    return { ok: true, code: code, role: newRole };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Xoá hẳn 1 nhân sự. Phòng (Phó/Chuyên viên) -> Trưởng phòng; Crew -> quản lý crew + cấp thấp hơn.
+ *  KHÔNG xoá chính mình & KHÔNG xoá Trưởng phòng (đổi vai trò trước). Task cũ giữ nguyên (hiện "—"). */
+function deleteMember(token, code) {
+  var u = requireUser_(token);
+  code = String(code || '').trim().toUpperCase();
+  if (!code) throw err_('Thiếu mã thành viên.');
+  if (code === String(u.code).toUpperCase()) throw err_('Không thể tự xoá tài khoản của mình.');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_MEMBERS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) { if (String(values[i][0]).trim().toUpperCase() === code) { rowIdx = i; break; } }
+    if (rowIdx < 0) throw err_('Không tìm thấy thành viên.');
+    var targetRole = String(values[rowIdx][3]).trim();
+    if (targetRole === ROLE.HEAD) throw err_('Không thể xoá Trưởng phòng. Hãy đổi vai trò trước.');
+    var allowed = isCrewRole_(targetRole)
+      ? (canManageCrew_(u) && (isCrewAdmin_(u) || rankOf_(targetRole) > rankOf_(u.role)))
+      : isHead_(u);
+    if (!allowed) throw err_('Bạn không có quyền xoá nhân sự này.');
+    sh.deleteRow(rowIdx + 1);
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Thêm MỚI một thành viên Production Crew (quản lý crew). Vai trò bắt buộc là vai trò crew. */
+function addCrewMember(token, payload) {
+  var u = requireCrewManager_(token);
+  payload = payload || {};
+  var code = String(payload.code || '').trim().toUpperCase();
+  var name = String(payload.name || '').trim();
+  var role = String(payload.role || '').trim();
+  var title = String(payload.title || '').trim();
+  var pin = String(payload.pin || '').trim();
+  if (!code) throw err_('Vui lòng nhập mã thành viên.');
+  if (!name) throw err_('Vui lòng nhập họ tên.');
+  if (CREW_ROLES.indexOf(role) < 0) throw err_('Vai trò Production Crew không hợp lệ.');
+  if (!isCrewAdmin_(u) && rankOf_(role) < rankOf_(u.role)) throw err_('Không thể tạo vai trò cao hơn bạn.');
+  if (pin.length < 4) throw err_('Mã PIN tối thiểu 4 ký tự.');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_MEMBERS);
+    var values = sh.getDataRange().getValues();
+    if (memberCodeExists_(values, code, '')) throw err_('Mã thành viên đã tồn tại.');
+    sh.appendRow([code, name, hashPin_(pin), role, title, true, nowIso_(), '[]', '']);
+    return { ok: true, code: code };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API: Phân quyền — Trưởng/Phó phòng GIAO quyền (vd: quản lý Production Crew) cho thành viên.
+// ---------------------------------------------------------------------------
+function setGrant(token, code, key, value) {
+  requireManager_(token);
+  code = String(code || '').trim().toUpperCase();
+  if (GRANT_KEYS.indexOf(key) < 0) throw err_('Quyền không hợp lệ.');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_MEMBERS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) { if (String(values[i][0]).trim().toUpperCase() === code) { rowIdx = i; break; } }
+    if (rowIdx < 0) throw err_('Không tìm thấy thành viên.');
+    var grants = parseGrants_(values[rowIdx][7]);
+    var idx = grants.indexOf(key);
+    if (value && idx < 0) grants.push(key);
+    else if (!value && idx >= 0) grants.splice(idx, 1);
+    sh.getRange(rowIdx + 1, MEMBER_COLS.indexOf('grants') + 1).setValue(JSON.stringify(grants));
+    return { ok: true, code: code, grants: grants };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// API: Lưu ảnh đại diện — chỉ cho CHÍNH MÌNH (data URL ảnh đã nén ở client). Chuỗi rỗng = xoá ảnh.
+function saveAvatar(token, dataUrl) {
+  var u = requireUser_(token);
+  dataUrl = String(dataUrl == null ? '' : dataUrl);
+  if (dataUrl && !/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(dataUrl)) throw err_('Ảnh không hợp lệ.');
+  if (dataUrl.length > 200000) throw err_('Ảnh quá lớn (tối đa ~150KB sau nén). Vui lòng chọn ảnh nhỏ hơn.');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_MEMBERS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) { if (String(values[i][0]).trim().toUpperCase() === u.code) { rowIdx = i; break; } }
+    if (rowIdx < 0) throw err_('Không tìm thấy thành viên.');
+    sh.getRange(rowIdx + 1, MEMBER_COLS.indexOf('avatar') + 1).setValue(dataUrl);
+    return { ok: true, code: u.code, avatar: dataUrl };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API: Mục tiêu KPI — chỉ Trưởng phòng
+// ---------------------------------------------------------------------------
+function setKpiTarget(token, targets) {
+  var u = requireHead_(token);
+  targets = targets || {};
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_KPI);
+    var values = sh.getDataRange().getValues();
+    var idx = {};
+    for (var i = 1; i < values.length; i++) {
+      var c = String(values[i][0] || '').trim();
+      if (c) idx[c] = i; // 0-based vào values
+    }
+    Object.keys(targets).forEach(function (code) {
+      var val = parseFloat(targets[code]); if (isNaN(val)) val = 0;
+      if (idx[code] !== undefined) {
+        sh.getRange(idx[code] + 1, 2).setValue(val);
+      } else {
+        sh.appendRow([code, val]);
+      }
+    });
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API: Đổi mã PIN — người dùng hiện tại
+// ---------------------------------------------------------------------------
+function changePassword(token, oldPin, newPin) {
+  var u = requireUser_(token);
+  if (String(newPin || '').trim().length < 4) throw err_('Mã PIN mới tối thiểu 4 ký tự.');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_MEMBERS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) {
+      if (String(values[i][0]).trim() === u.code) { rowIdx = i; break; }
+    }
+    if (rowIdx < 0) throw err_('Không tìm thấy tài khoản.');
+    if (String(values[rowIdx][2]) !== hashPin_(oldPin)) throw err_('Mã cá nhân hiện tại không đúng.');
+    sh.getRange(rowIdx + 1, 3).setValue(hashPin_(String(newPin).trim()));
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API: Trợ lý AI (proxy server-side tới Gemini) — KHÔNG lộ API key ra client.
+// Cấu hình: Project Settings → Script properties → GEMINI_API_KEY (bắt buộc),
+//           GEMINI_MODEL (tùy chọn, mặc định gemini-2.0-flash).
+// ---------------------------------------------------------------------------
+function aiGenerate(token, prompt) {
+  requireUser_(token);
+  prompt = String(prompt || '').trim();
+  if (!prompt) throw err_('Thiếu nội dung yêu cầu AI.');
+
+  var props = PropertiesService.getScriptProperties();
+  var key = props.getProperty('GEMINI_API_KEY');
+  if (!key) throw err_('Tính năng AI chưa được cấu hình. Quản trị viên hãy đặt GEMINI_API_KEY trong Script properties.');
+  var model = props.getProperty('GEMINI_MODEL') || 'gemini-2.0-flash';
+
+  var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+            encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key);
+  var payload = { contents: [{ parts: [{ text: prompt }] }] };
+
+  var lastErr = '';
+  for (var attempt = 0; attempt < 3; attempt++) {
+    var resp = UrlFetchApp.fetch(url, {
+      method: 'post', contentType: 'application/json',
+      payload: JSON.stringify(payload), muteHttpExceptions: true
+    });
+    var codeHttp = resp.getResponseCode();
+    if (codeHttp === 200) {
+      var data = JSON.parse(resp.getContentText());
+      var text = data &&
+        data.candidates && data.candidates[0] &&
+        data.candidates[0].content && data.candidates[0].content.parts &&
+        data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
+      if (text) return String(text);
+      throw err_('AI không trả về nội dung. Vui lòng thử lại.');
+    }
+    lastErr = 'HTTP ' + codeHttp;
+    if (codeHttp >= 400 && codeHttp < 500 && codeHttp !== 429) {
+      throw err_('Lỗi gọi AI (' + codeHttp + '). Kiểm tra GEMINI_API_KEY / tên model.');
+    }
+    Utilities.sleep(800 * (attempt + 1));
+  }
+  throw err_('Không gọi được AI sau nhiều lần thử (' + lastErr + ').');
+}
