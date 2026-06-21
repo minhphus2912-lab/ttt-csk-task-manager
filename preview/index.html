@@ -462,6 +462,16 @@ input:focus, select:focus, textarea:focus { outline: none; background: rgba(255,
  const apiKey = "";
   // Phát hiện môi trường: chạy trong Google Apps Script (HtmlService) hay bản preview tĩnh.
  var IS_GAS = (typeof google !== 'undefined' && google.script && google.script.run);
+ // URL JSON API của backend Google Apps Script (ghi vào Google Sheets).
+ var GAS_EXEC_URL = 'https://script.google.com/macros/s/AKfycbzVfiiIoCbmJ4onCv39fUPvtZScv6j7a1HZPdIKD4T1N6mQNFnraCE6Eq1pqFq8ezfLkw/exec';
+ // Chọn backend:
+ //  - Được GAS phục vụ (IS_GAS) -> dùng google.script.run (nhanh, trong iframe).
+ //  - Chạy trên web thật (vd GitHub Pages) -> gọi GAS qua fetch (ghi Sheet thật).
+ //  - Chạy LOCAL (localhost/file) -> MockServer (demo, dữ liệu localStorage) để dev/demo offline.
+ //    (Thêm ?backend=gas vào URL local để ép dùng backend thật khi cần test.)
+ var IS_LOCAL = (location.protocol === 'file:' || /^(localhost|127\.|0\.0\.0\.0|\[?::1)/.test(location.hostname));
+ var FORCE_GAS = /[?&]backend=gas/.test(location.search);
+ var GAS_API_URL = (!IS_GAS && (FORCE_GAS || !IS_LOCAL)) ? GAS_EXEC_URL : '';
  function gasRun(fn) {
    var args = Array.prototype.slice.call(arguments, 1);
    return new Promise(function (resolve, reject) {
@@ -471,9 +481,21 @@ input:focus, select:focus, textarea:focus { outline: none; background: rgba(255,
      runner[fn].apply(runner, args);
    });
  }
+ // Gọi backend GAS qua fetch (cross-origin). Content-Type text/plain = request "đơn giản" (không preflight CORS).
+ function apiCall(fn, args) {
+   return fetch(GAS_API_URL, {
+     method: 'POST', redirect: 'follow',
+     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+     body: JSON.stringify({ fn: fn, args: args || [] })
+   }).then(function (r) { return r.json(); }).then(function (j) {
+     if (j && j.ok) return j.result;
+     throw new Error((j && j.error) || 'Lỗi kết nối máy chủ.');
+   });
+ }
  async function callGemini(prompt) {
    // Trên GAS: gọi proxy server-side (API key nằm trong Script Properties, không lộ ra client).
    if (IS_GAS) return gasRun('aiGenerate', state.token, prompt);
+   if (GAS_API_URL) return apiCall('aiGenerate', [state.token, prompt]); // qua backend thật
    if (!apiKey) throw new Error('Tính năng AI chưa được cấu hình (thiếu API key).');
    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=' + apiKey;
    const payload = { contents: [{ parts: [{ text: prompt }] }] };
@@ -1001,7 +1023,17 @@ input:focus, select:focus, textarea:focus { outline: none; background: rgba(255,
    addCrewMember: function (tk, p) { return gasRun('addCrewMember', tk, p); },
    logout: function (tk) { return gasRun('logout', tk); }
  };
- var Server = IS_GAS ? GasServer : MockServer;
+ // Backend thật qua fetch (cùng tập hàm với GasServer; mỗi method chuyển args sang apiCall).
+ var FetchServer = (function () {
+   var names = ['bootstrap','login','logout','getState','createTask','transitionTask','updateTaskNote',
+     'updateTask','deleteTask','createProject','updateProject','completeProject','deleteProject',
+     'changePassword','setKpiTarget','setCrewRole','setGrant','saveAvatar','upsertMember',
+     'deleteMember','addCrewMember','aiGenerate','resetToSeed'];
+   var o = {};
+   names.forEach(function (n) { o[n] = function () { return apiCall(n, Array.prototype.slice.call(arguments)); }; });
+   return o;
+ })();
+ var Server = IS_GAS ? GasServer : (GAS_API_URL ? FetchServer : MockServer);
 
  // =========================================================================
  // STATE & RENDER
@@ -1044,8 +1076,8 @@ input:focus, select:focus, textarea:focus { outline: none; background: rgba(255,
  function renderLogin() {
    var boot = state.boot || { departmentName: 'Phòng ban' };
    // Bảo mật: KHÔNG liệt kê toàn bộ nhân sự ở màn đăng nhập — người dùng TỰ NHẬP mã đăng nhập.
-   var demoHint = IS_GAS
-     ? '<div class="demo-hint"><b>Hướng dẫn:</b> Nhập <b>mã đăng nhập</b> (vd cấp bởi quản trị) và <b>PIN cá nhân</b>.</div>'
+   var demoHint = (IS_GAS || GAS_API_URL)
+     ? '<div class="demo-hint"><b>Hướng dẫn:</b> Nhập <b>mã đăng nhập</b> (do quản trị cấp) và <b>PIN cá nhân</b>.</div>'
      : '<div class="demo-hint"><b>Tài khoản demo</b> (PIN <b>123456</b>): TP01 · PP01 · TT01 · TT02 · TT03 · PD01 · PD02 · PD03 · MM01.<br><a href="#" id="mock-reset" style="display:inline-block; margin-top:8px; font-weight:600">↺ Khôi phục dữ liệu mẫu gốc</a></div>';
    document.body.innerHTML =
      '<div class="login-wrap"><form class="login-card" id="login-form" autocomplete="off">' +

@@ -94,6 +94,41 @@ function include(name) {
 }
 
 // ---------------------------------------------------------------------------
+// JSON API (doPost) — cho client CHẠY NGOÀI GAS (vd GitHub Pages) gọi qua fetch.
+// Gửi: POST với Content-Type text/plain (request "đơn giản" → KHÔNG preflight CORS),
+//      body = JSON { fn: "createTask", args: [token, payload] }.
+// Trả: JSON { ok:true, result } hoặc { ok:false, error }.
+// CHỈ cho gọi các hàm trong API_FUNCTIONS (đúng tập mà google.script.run dùng) —
+// mọi kiểm tra quyền/đăng nhập vẫn nằm trong từng hàm (token-based).
+// ---------------------------------------------------------------------------
+function apiFunctions_() {
+  return {
+    bootstrap: bootstrap, login: login, logout: logout, getState: getState,
+    createTask: createTask, transitionTask: transitionTask, updateTaskNote: updateTaskNote,
+    updateTask: updateTask, deleteTask: deleteTask,
+    createProject: createProject, updateProject: updateProject, completeProject: completeProject, deleteProject: deleteProject,
+    changePassword: changePassword, setKpiTarget: setKpiTarget, setCrewRole: setCrewRole, setGrant: setGrant,
+    saveAvatar: saveAvatar, upsertMember: upsertMember, deleteMember: deleteMember, addCrewMember: addCrewMember,
+    aiGenerate: aiGenerate, resetToSeed: resetToSeed
+  };
+}
+function doPost(e) {
+  var out;
+  try {
+    ensureMigrated_();
+    var body = (e && e.postData && e.postData.contents) ? JSON.parse(e.postData.contents) : {};
+    var fn = String(body.fn || '');
+    var args = Array.isArray(body.args) ? body.args : [];
+    var f = apiFunctions_()[fn];
+    if (!f) throw err_('Hàm API không hợp lệ: ' + fn);
+    out = { ok: true, result: f.apply(null, args) };
+  } catch (err) {
+    out = { ok: false, error: String(err && err.message ? err.message : err) };
+  }
+  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ---------------------------------------------------------------------------
 // Tiện ích chung
 // ---------------------------------------------------------------------------
 function getSS_() {
