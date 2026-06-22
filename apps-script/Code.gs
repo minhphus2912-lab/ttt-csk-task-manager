@@ -64,7 +64,10 @@ var GRANT_KEYS = ['MANAGE_CREW'];
 var TASK_COLS = ['taskCode', 'title', 'description', 'assigneeCode', 'difficulty',
                  'kpiPoint', 'status', 'createdBy', 'createdAt', 'deadline',
                  'startedAt', 'submittedAt', 'completedAt', 'reportLink', 'note',
-                 'priority', 'pauseHours', 'lastPausedAt', 'projectId', 'crewTask'];
+                 'priority', 'pauseHours', 'lastPausedAt', 'projectId', 'crewTask',
+                 'category', 'completeLink', 'phatSinh'];
+// Phần phụ công việc (Trung Tâm Truyền thông).
+var WORK_CATEGORIES = ['Admin', 'Design', 'Digital marketing', 'Multimedia', 'PR', 'Internal communications'];
 var PROJECT_COLS = ['id', 'name', 'leadCode', 'memberCodes', 'eventDate', 'status', 'createdAt'];
 var KPI_COLS = ['memberCode', 'target'];
 
@@ -108,7 +111,7 @@ function apiFunctions_() {
     updateTask: updateTask, deleteTask: deleteTask,
     createProject: createProject, updateProject: updateProject, completeProject: completeProject, deleteProject: deleteProject,
     changePassword: changePassword, setKpiTarget: setKpiTarget, setCrewRole: setCrewRole, setGrant: setGrant,
-    saveAvatar: saveAvatar, upsertMember: upsertMember, deleteMember: deleteMember, addCrewMember: addCrewMember,
+    saveAvatar: saveAvatar, upsertMember: upsertMember, deleteMember: deleteMember, addCrewMember: addCrewMember, updateCrewMember: updateCrewMember,
     aiGenerate: aiGenerate, resetToSeed: resetToSeed
   };
 }
@@ -354,11 +357,12 @@ function taskObjFromRow_(row) {
   o.kpiPoint = Number(o.kpiPoint) || 0;
   o.pauseHours = Number(o.pauseHours) || 0;
   o.crewTask = (o.crewTask === true || String(o.crewTask).toUpperCase() === 'TRUE');
+  o.phatSinh = (o.phatSinh === true || String(o.phatSinh).toUpperCase() === 'TRUE');
   var dateOnly = { deadline: 1 };
   var dateTime = { createdAt: 1, startedAt: 1, submittedAt: 1, completedAt: 1, lastPausedAt: 1 };
   ['taskCode', 'title', 'description', 'assigneeCode', 'difficulty', 'status',
    'createdBy', 'createdAt', 'deadline', 'startedAt', 'submittedAt', 'completedAt',
-   'reportLink', 'note', 'priority', 'lastPausedAt', 'projectId']
+   'reportLink', 'note', 'priority', 'lastPausedAt', 'projectId', 'category', 'completeLink']
     .forEach(function (c) {
       if (dateOnly[c]) o[c] = cellToDateStr_(o[c], false);
       else if (dateTime[c]) o[c] = cellToDateStr_(o[c], true);
@@ -440,7 +444,8 @@ function readKpiTargets_() {
 /** Dữ liệu công khai cho màn hình đăng nhập (KHÔNG chứa pin). */
 // Tăng MIG_VERSION mỗi khi cần migrate_() chạy lại trên dữ liệu ĐÃ deploy.
 // v12: thêm cột avatar, MULTIMEDIA -> THANH_VIEN, đổi tên đơn vị.
-var MIG_VERSION = '12';
+// v13: thêm cột task category, completeLink, phatSinh.
+var MIG_VERSION = '13';
 function ensureMigrated_() {
   try {
     var props = PropertiesService.getScriptProperties();
@@ -594,6 +599,10 @@ function createTask(token, payload) {
   var priority = String(payload.priority || '').trim();
   if (PRIORITY_ORDER.indexOf(priority) < 0) priority = 'Bình thường';
 
+  var category = String(payload.category || '').trim();
+  if (category && WORK_CATEGORIES.indexOf(category) < 0) category = '';
+  var phatSinh = !!payload.phatSinh && !!projectId; // chỉ task trong dự án mới có "phát sinh"
+
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -620,7 +629,8 @@ function createTask(token, payload) {
       status: STATUS.TODO, createdBy: u.code, createdAt: nowIso_(),
       deadline: deadline, startedAt: '', submittedAt: '', completedAt: '',
       reportLink: '', note: note, priority: priority,
-      pauseHours: 0, lastPausedAt: '', projectId: projectId || '', crewTask: crewTask
+      pauseHours: 0, lastPausedAt: '', projectId: projectId || '', crewTask: crewTask,
+      category: category, completeLink: '', phatSinh: phatSinh
     };
     tSheet.appendRow(taskToRow_(task));
     task.projectId = projectId || null;
@@ -676,6 +686,7 @@ function transitionTask(token, taskCode, action, reportLink) {
     } else if (action === 'complete') {
       if (t.status !== STATUS.SENT) throw err_('Chỉ xác nhận hoàn thành khi công việc "Đã gửi".');
       t.status = STATUS.DONE; t.completedAt = now;
+      if (reportLink !== undefined && reportLink !== null && String(reportLink).trim() !== '') t.completeLink = String(reportLink).trim();
     } else {
       throw err_('Hành động không hợp lệ.');
     }
@@ -749,6 +760,11 @@ function updateTask(token, taskCode, payload) {
     t.priority = priority;
     t.deadline = normalizeDate_(payload.deadline);
     if (payload.note !== undefined) t.note = String(payload.note || '');
+    if (payload.category !== undefined) {
+      var cat = String(payload.category || '').trim();
+      t.category = (cat && WORK_CATEGORIES.indexOf(cat) >= 0) ? cat : '';
+    }
+    if (payload.phatSinh !== undefined) t.phatSinh = !!payload.phatSinh && !!t.projectId;
 
     var newRow = taskToRow_(t);
     sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
@@ -1071,6 +1087,55 @@ function addCrewMember(token, payload) {
     var values = sh.getDataRange().getValues();
     if (memberCodeExists_(values, code, '')) throw err_('Mã thành viên đã tồn tại.');
     sh.appendRow([code, name, hashPin_(pin), role, title, true, nowIso_(), '[]', '']);
+    return { ok: true, code: code };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Sửa ĐẦY ĐỦ thông tin một thành viên Production Crew (quản lý crew). Có thể đổi mã (cascade), tên, chức danh, vai trò crew, PIN.
+ *  Chỉ sửa được người thuộc crew; quản lý không phải admin chỉ sửa được cấp thấp hơn mình. */
+function updateCrewMember(token, payload) {
+  var u = requireCrewManager_(token);
+  payload = payload || {};
+  var origCode = String(payload.origCode || '').trim().toUpperCase();
+  var code = String(payload.code || '').trim().toUpperCase();
+  var name = String(payload.name || '').trim();
+  var role = String(payload.role || '').trim();
+  var title = String(payload.title || '').trim();
+  if (!origCode) throw err_('Thiếu mã thành viên cần sửa.');
+  if (!code) throw err_('Vui lòng nhập mã thành viên.');
+  if (!name) throw err_('Vui lòng nhập họ tên.');
+  if (CREW_ROLES.indexOf(role) < 0) throw err_('Vai trò Production Crew không hợp lệ.');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_MEMBERS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) { if (String(values[i][0]).trim().toUpperCase() === origCode) { rowIdx = i; break; } }
+    if (rowIdx < 0) throw err_('Không tìm thấy thành viên.');
+    var cur = values[rowIdx];
+    var curRole = String(cur[3]).trim();
+    if (!isCrewRole_(curRole)) throw err_('Chỉ sửa được thành viên thuộc Production Crew tại đây.');
+    if (!isCrewAdmin_(u) && rankOf_(curRole) <= rankOf_(u.role)) throw err_('Chỉ được sửa thành viên crew có cấp thấp hơn bạn.');
+    if (!isCrewAdmin_(u) && rankOf_(role) < rankOf_(u.role)) throw err_('Không thể nâng lên vai trò cao hơn bạn.');
+    if (memberCodeExists_(values, code, origCode)) throw err_('Mã thành viên đã tồn tại.');
+
+    var pinHash = String(cur[2]);
+    if (payload.pin !== undefined && String(payload.pin).trim() !== '') {
+      if (String(payload.pin).trim().length < 4) throw err_('Mã PIN tối thiểu 4 ký tự.');
+      pinHash = hashPin_(String(payload.pin).trim());
+    }
+    var active = (payload.active === undefined) ? (cur[5] === true || String(cur[5]).toUpperCase() === 'TRUE') : !!payload.active;
+    var updated = [code, name, pinHash, role, title, active, String(cur[6] || nowIso_()),
+                   (cur[7] === undefined || cur[7] === '') ? '[]' : cur[7], (cur[8] === undefined ? '' : cur[8])]; // giữ grants + avatar
+    sh.getRange(rowIdx + 1, 1, 1, updated.length).setValues([updated]);
+    if (code !== origCode) {
+      cascadeMemberCode_(origCode, code);
+      if (origCode === String(u.code).toUpperCase()) CacheService.getScriptCache().put('S_' + token, code, SESSION_TTL);
+    }
     return { ok: true, code: code };
   } finally {
     lock.releaseLock();
