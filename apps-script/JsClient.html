@@ -343,7 +343,7 @@
      if (!asg) return Promise.reject(new Error('Người được giao việc không hợp lệ.'));
      if (crewTask && !isCrewRole(asg.role)) return Promise.reject(new Error('Chỉ giao task crew cho thành viên Production Crew.'));
      if (!crewTask && !hasDeptBoard(asg.role)) return Promise.reject(new Error('Việc của Phòng chỉ giao cho nhân sự có mặt ở Phòng.'));
-     if (outranksWithinSilo(u.role, asg.role)) return Promise.reject(new Error('Không thể giao việc cho người có vai trò cao hơn.'));
+     if (!(crewTask && isCrewAdmin(u)) && outranksWithinSilo(u.role, asg.role)) return Promise.reject(new Error('Không thể giao việc cho người có vai trò cao hơn.'));
      if (selfCreate && p.projectId) {
        var prj = (db.projects||[]).filter(function(x){return x.id===p.projectId;})[0];
        if (!prj) return Promise.reject(new Error('Dự án không tồn tại.'));
@@ -395,7 +395,7 @@
      if (!as) return Promise.reject(new Error('Người được giao việc không hợp lệ.'));
      if (t.crewTask && !isCrewRole(as.role)) return Promise.reject(new Error('Chỉ giao task crew cho thành viên Production Crew.'));
      if (!t.crewTask && !hasDeptBoard(as.role)) return Promise.reject(new Error('Việc của Phòng chỉ giao cho nhân sự có mặt ở Phòng.'));
-     if (outranksWithinSilo(u.role, as.role)) return Promise.reject(new Error('Không thể giao việc cho người có vai trò cao hơn.'));
+     if (!(t.crewTask && isCrewAdmin(u)) && outranksWithinSilo(u.role, as.role)) return Promise.reject(new Error('Không thể giao việc cho người có vai trò cao hơn.'));
      if (db.config[p.difficulty] === undefined) return Promise.reject(new Error('Độ khó không hợp lệ.'));
      t.title = p.title; t.description = p.description||''; t.assigneeCode = p.assigneeCode; t.difficulty = p.difficulty; t.kpiPoint = db.config[p.difficulty];
      t.priority = (PRIORITY_ORDER.indexOf(p.priority)>=0?p.priority:'Bình thường'); t.deadline = p.deadline||''; t.note = p.note!=null?p.note:t.note;

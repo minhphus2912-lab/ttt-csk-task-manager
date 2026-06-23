@@ -582,7 +582,8 @@ function createTask(token, payload) {
   if (!assignee) throw err_('Người được giao việc không hợp lệ.');
   if (crewTask && !isCrewRole_(assignee.role)) throw err_('Chỉ giao task crew cho thành viên thuộc Production Crew.');
   if (!crewTask && !hasDeptBoard_(assignee.role)) throw err_('Việc của Phòng chỉ giao cho nhân sự có mặt ở Phòng.');
-  if (outranksWithinSilo_(u.role, assignee.role)) throw err_('Không thể giao việc cho người có vai trò cao hơn.');
+  // Quản lý crew toàn quyền (Trưởng/Phó phòng hoặc người ĐƯỢC CẤP QUYỀN) giao task crew cho BẤT KỲ thành viên crew, không vướng cấp bậc.
+  if (!(crewTask && isCrewAdmin_(u)) && outranksWithinSilo_(u.role, assignee.role)) throw err_('Không thể giao việc cho người có vai trò cao hơn.');
 
   var difficulty = String(payload.difficulty || '').trim();
   if (DIFFICULTY_ORDER.indexOf(difficulty) < 0) throw err_('Độ khó không hợp lệ.');
@@ -756,7 +757,7 @@ function updateTask(token, taskCode, payload) {
     if (!assignee) throw err_('Người được giao việc không hợp lệ.');
     if (t.crewTask && !isCrewRole_(assignee.role)) throw err_('Chỉ giao task crew cho thành viên thuộc Production Crew.');
     if (!t.crewTask && !hasDeptBoard_(assignee.role)) throw err_('Việc của Phòng chỉ giao cho nhân sự có mặt ở Phòng.');
-    if (outranksWithinSilo_(u.role, assignee.role)) throw err_('Không thể giao việc cho người có vai trò cao hơn.');
+    if (!(t.crewTask && isCrewAdmin_(u)) && outranksWithinSilo_(u.role, assignee.role)) throw err_('Không thể giao việc cho người có vai trò cao hơn.');
     var difficulty = String(payload.difficulty || '').trim();
     if (DIFFICULTY_ORDER.indexOf(difficulty) < 0) throw err_('Độ khó không hợp lệ.');
     var points = 0; // KPI đã bỏ
