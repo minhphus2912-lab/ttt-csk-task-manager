@@ -11,7 +11,7 @@ Web app quản lý công việc nội bộ cho Trung Tâm Truyền Thông - Tổ
 - 🎨 Giao diện **glassmorphism iOS 26**, 3 màu chính phối xen kẽ: **Cam `#EE6823`** · **Xanh nhạt `#17479D`** · **Xanh đậm `#21217D`**; hover nhấc nhẹ (không lắc lư), icon xoay ngang.
 - 🔐 Đăng nhập **tự quản lý**: chọn tên + nhập **mã PIN cá nhân** — không cần tài khoản Google riêng.
 - 👥 7 vai trò: **Trưởng phòng**, **Phó phòng**, **Chuyên viên** + 4 vai trò Production Crew (**Lead Production**, **Sub-Lead Quay**, **Sub-Lead Chụp**, **Thành viên**). Lead/Sub-Lead là quản lý crew; **Thành viên** là vai trò crew cơ bản (chỉ làm việc của mình).
-- 🚀 Quản lý **Dự án (Projects)** song song với **công việc daily**, mỗi nhánh có cách tính KPI riêng.
+- 🚀 Mục **Công việc** gộp 2 tab **Công việc daily** & **Dự án**, mỗi tab có bộ lọc **Ngày / Tuần / Tháng / Năm** riêng. (Đã **bỏ chấm điểm KPI** — giữ "Độ khó" làm nhãn.)
 - 🎬 Mục **Production Crew** đặc quyền (Dashboard · Công việc · Nhân sự · Thống kê) cho đội quay/chụp/dựng.
 - 📅 **Lịch cá nhân** (mọi người): xem công việc của mình theo **Tuần / Tháng / Năm**, đặt theo **hạn chót (deadline)** vào đúng ô ngày; bấm tháng ở chế độ Năm để xem chi tiết.
 - 🖼️ **Ảnh đại diện**: bấm vào tên mình ở thanh bên để đổi avatar (ảnh tự thu nhỏ về 256px, nén JPEG, lưu kèm hồ sơ).
@@ -32,18 +32,17 @@ Web app quản lý công việc nội bộ cho Trung Tâm Truyền Thông - Tổ
 | Nhóm | Mô tả |
 |---|---|
 | **Nhân sự** | **Trưởng phòng & Phó phòng** tạo/sửa tài khoản, gán **chức danh** & **mã thành viên**, đặt PIN, vô hiệu hóa. Mã thành viên **không được trùng** và **có thể sửa** — đổi mã sẽ **tự cập nhật** ở mọi nơi (task, dự án, KPI). |
-| **Công việc daily** | Trưởng/Phó phòng giao việc cho bất kỳ ai; **Chuyên viên tự thêm việc của chính mình** (daily & trong dự án mình thuộc). Thành viên Production Crew không tự thêm. Mã tự sinh `yyyymmdd-STT-MãNV` (STT đếm từ 0h00, reset mỗi ngày). |
-| **Dự án (Projects)** | Tạo chiến dịch/sự kiện, gán Lead + thành viên, giao task vào dự án; có **KPI % đóng góp** riêng. |
+| **Công việc** (gộp) | 1 mục với 2 tab con **Công việc daily** \| **Dự án**, mỗi tab lọc theo **Ngày/Tuần/Tháng/Năm**. Trưởng/Phó phòng giao việc cho bất kỳ ai; **Chuyên viên tự thêm & sửa task daily của chính mình**. Tạo dự án, gán Lead + thành viên, giao task vào dự án. |
 | **Luồng trạng thái** | `Chưa bắt đầu → Đang chạy → (Tạm dừng) → Đã gửi → Hoàn thành`. Bước **Gửi draft** nhập **link draft**; bước **Xác nhận hoàn thành** nhập **link hoàn thành**. Task xong hiển thị nút **🔗 mở link draft / ✅ link hoàn thành** để kiểm tra. |
 | **Phần phụ công việc** | Mỗi task của Trung Tâm gắn 1 nhóm: **Admin · Design · Digital marketing · Multimedia · PR · Internal communications** (chọn khi tạo/sửa; hiện badge 🏷️ trên thẻ task). |
-| **Ưu tiên & hệ số KPI** | Thấp / Bình thường / Cao / Khẩn cấp. **Khẩn cấp + Nâng cao/Khó ⇒ ×1.5 KPI**. |
-| **Dashboard** | KPI đã làm / được giao, tỉ lệ hoàn thành, thời gian TB làm việc, số dự án đang chạy. |
-| **Phân KPI chung** | Trưởng phòng đặt **mục tiêu KPI** từng người, theo dõi % đạt theo Tuần/Tháng/Năm. |
-| **Production Crew** | Mục đặc quyền cho Trưởng/Phó phòng + Lead/Sub-Lead (và bất kỳ ai **được cấp quyền** MANAGE_CREW). Sao chép 100% workflow Phòng: Dashboard, giao task crew, quản lý thành viên crew (thêm/**sửa đầy đủ** mã·tên·chức danh·vai trò·PIN/đổi vai trò/xoá), thống kê KPI — tách biệt task daily/dự án. Người quản lý crew thấy & điều phối **toàn bộ** task crew. Vai trò **Thành viên** là crew cơ bản: chỉ thấy & làm việc crew của chính mình, không quản lý. |
+| **Mức độ ưu tiên (màu)** | Thấp 🟢 · Bình thường 🟡 · Cao 🟠 · Khẩn cấp 🔴 — tô màu trên thẻ task. |
+| **Dashboard cá nhân** | (Chuyên viên/Thành viên) tỉ lệ hoàn thành, TG làm TB, TG tạm hoãn TB, số task daily · dự án **của mình** (gồm cả task dự án). |
+| **Dashboard quản lý** | (Trưởng/Phó phòng) **thanh ngang theo từng chuyên viên**: số task · TG hoàn thành TB · TG tạm hoãn TB · task/tháng · thanh xếp chồng theo **mức độ ưu tiên** (4 màu); kèm **1 vòng tròn** tỉ lệ task giữa các chuyên viên. |
+| **Production Crew** | Thiết kế **giống Trung Tâm**: Bảng điều khiển (quản lý = thanh ngang per-thành-viên + 1 vòng tròn; thành viên = dashboard cá nhân), mục **Công việc** 2 tab daily/Dự án, Nhân sự (thêm/**sửa đầy đủ**/đổi vai trò/xoá). Task crew có thể **liên kết vào dự án** của Trung Tâm. Quản lý crew = Trưởng/Phó phòng + Lead/Sub-Lead + người được cấp MANAGE_CREW; **Thành viên** là crew cơ bản (chỉ việc của mình). |
 | **Dự án — Phát sinh** | Khi giao task vào dự án có thể đánh dấu **⚡ Phát sinh** (ngoài kế hoạch); trang chi tiết dự án tách riêng **📋 Công việc kế hoạch** và **⚡ Công việc phát sinh**. |
-| **Dashboard nhóm** | (Trưởng/Phó phòng, chế độ Toàn phòng) biểu đồ **task theo 6 nhóm công việc** + **thanh tải việc mỗi người**: task thường (cam `#EE6823`) vs task dự án (xanh `#21217D`) kèm số. |
+| **Phần phụ công việc** | Task của Trung Tâm gắn 1 nhóm: Admin · Design · Digital marketing · Multimedia · PR · Internal communications (badge 🏷️). |
 | **Phân quyền (🔑)** | Mục riêng cho Trưởng/Phó phòng: cấp/thu hồi quyền **Quản lý Production Crew** (MANAGE_CREW) cho bất kỳ Chuyên viên Phòng hoặc Thành viên crew. Cấp quyền → người đó hiện thêm khu Production Crew và quản lý được toàn bộ crew; thu hồi → mất quyền ngay. |
-| **Xuất Excel (⬇️)** | Trưởng/Phó phòng xuất báo cáo `.xlsx` (3 sheet: Công việc · Nhân sự · Mục tiêu KPI) đúng phạm vi dữ liệu mình xem được. Không chứa thông tin liên hệ nhạy cảm. |
+| **Xuất Excel (⬇️)** | Trưởng/Phó phòng xuất báo cáo `.xlsx` (2 sheet: Công việc · Nhân sự) đúng phạm vi dữ liệu mình xem được. Không chứa thông tin liên hệ nhạy cảm. |
 | **Lịch (📅)** | Mọi vai trò: **Lịch của tôi** theo **Tuần / Tháng / Năm** (đặt theo hạn chót, chip màu theo trạng thái, bấm mở ghi chú; Năm đếm theo tháng; việc chưa hạn gom khay riêng). Quản lý có thêm 2 mục mở-rộng (accordion) **tách bạch**: 🏢 **Lịch toàn Trung Tâm** (Trưởng/Phó phòng) và 🎬 **Lịch toàn Production Crew** (quản lý crew). |
 | **Ảnh đại diện (🖼️)** | Bấm vào tên mình ở thanh bên → đổi avatar. Ảnh được **thu nhỏ về tối đa 256px + nén JPEG** ngay tại trình duyệt (base64 ≲150KB), lưu kèm hồ sơ nhân sự; hiện thành vòng tròn ở thanh bên, có thể xoá. Chỉ tự đổi ảnh của mình. |
 | **Quyền thao tác task** | Bắt đầu/Tạm dừng/Tiếp tục/Gửi/Hoàn thành/Ghi chú **chỉ người được giao** làm được (server + client cùng chặn). Trưởng/Phó phòng chỉ *giao* việc, không thao tác hộ. |
@@ -51,10 +50,7 @@ Web app quản lý công việc nội bộ cho Trung Tâm Truyền Thông - Tổ
 | **Đổi PIN** | Mỗi người tự đổi mã PIN trong trang Cài đặt. |
 | **Trợ lý AI** | Nút "✨ AI Viết" (brief) & "✨ AI Gợi ý". Cần khóa Gemini đặt trong Script Properties. |
 
-**Cách tính KPI** (mặc định, đổi trong sheet `Config`): Dễ = 1 · Bình thường = 2 · Nâng cao = 3 · Khó = 4.
-
-> *KPI được giao* = tổng điểm việc **được giao** trong kỳ (theo ngày tạo).
-> *KPI đã làm* = tổng điểm việc **Hoàn thành** trong kỳ (theo ngày hoàn thành) × hệ số ưu tiên.
+> **Đã bỏ cơ chế chấm điểm KPI** (từ v18). "Độ khó" (Dễ/Bình thường/Nâng cao/Khó) giữ lại làm **nhãn** thông tin, không còn quy ra điểm. Thống kê quản lý dựa trên **số lượng task · thời gian hoàn thành/tạm hoãn trung bình · mức độ ưu tiên**.
 
 ---
 
