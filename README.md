@@ -34,7 +34,7 @@ Web app quản lý công việc nội bộ cho Trung Tâm Truyền Thông - Tổ
 | **Nhân sự** | **Trưởng phòng & Phó phòng** tạo/sửa tài khoản, gán **chức danh** & **mã thành viên**, đặt PIN, vô hiệu hóa. Mã thành viên **không được trùng** và **có thể sửa** — đổi mã sẽ **tự cập nhật** ở mọi nơi (task, dự án, KPI). |
 | **Công việc** (gộp) | 1 mục với 2 tab con **Công việc daily** \| **Dự án**, mỗi tab lọc theo **Ngày/Tuần/Tháng/Năm**. Trưởng/Phó phòng giao việc cho bất kỳ ai; **Chuyên viên tự thêm & sửa task daily của chính mình**. Tạo dự án, gán Lead + thành viên, giao task vào dự án. |
 | **Luồng trạng thái** | `Chưa bắt đầu → Đang chạy → (Tạm dừng) → Đã gửi → Hoàn thành`. Bước **Gửi draft** nhập **link draft**; bước **Xác nhận hoàn thành** nhập **link hoàn thành**. Task xong hiển thị nút **🔗 mở link draft / ✅ link hoàn thành** để kiểm tra. |
-| **Phần phụ công việc** | Mỗi task của Trung Tâm gắn 1 nhóm: **Admin · Design · Digital marketing · Multimedia · PR · Internal communications** (chọn khi tạo/sửa; hiện badge 🏷️ trên thẻ task). |
+| **Phần phụ công việc** | Mỗi task của Trung Tâm gắn 1 nhóm: **Admin · Design · Digital marketing · Facebook · TikTok · Multimedia · PR · Internal communications** (chọn khi tạo/sửa; hiện badge 🏷️ trên thẻ task). |
 | **Mức độ ưu tiên (màu)** | Thấp 🟢 · Bình thường 🟡 · Cao 🟠 · Khẩn cấp 🔴 — tô màu trên thẻ task. |
 | **Dashboard cá nhân** | (Chuyên viên/Thành viên) tỉ lệ hoàn thành, TG làm TB, TG tạm hoãn TB, số task daily · dự án **của mình** (gồm cả task dự án). |
 | **Dashboard quản lý** | (Trưởng/Phó phòng) **thanh ngang theo từng chuyên viên**: số task · TG hoàn thành TB · TG tạm hoãn TB · task/tháng · thanh xếp chồng theo **mức độ ưu tiên** (4 màu); kèm **1 vòng tròn** tỉ lệ task giữa các chuyên viên. |
@@ -51,6 +51,20 @@ Web app quản lý công việc nội bộ cho Trung Tâm Truyền Thông - Tổ
 | **Trợ lý AI** | Nút "✨ AI Viết" (brief) & "✨ AI Gợi ý". Cần khóa Gemini đặt trong Script Properties. |
 
 > **Đã bỏ cơ chế chấm điểm KPI** (từ v18). "Độ khó" (Dễ/Bình thường/Nâng cao/Khó) giữ lại làm **nhãn** thông tin, không còn quy ra điểm. Thống kê quản lý dựa trên **số lượng task · thời gian hoàn thành/tạm hoãn trung bình · mức độ ưu tiên**.
+
+### Mới ở v20
+- **Bảo mật phiên (1 tài khoản = 1 phiên):** đăng nhập ở nơi mới sẽ **đá** phiên cũ — phiên cũ tự đăng xuất và báo *"Tài khoản đang được sử dụng"*. Màn đăng nhập có **"Ghi nhớ đăng nhập"** (bật = nhớ qua lần mở lại trình duyệt; tắt = chỉ trong phiên tab).
+- **Thông báo công việc (khi đang mở web):** poll ~15s, hiện **thông báo trình duyệt** + **âm thanh "ting"**, định dạng `[Tên task] - [Deadline] - Bạn có quà tặng đến từ [Người giao]`.
+- **Trang Tổng hợp / Thông báo** (trang đích sau đăng nhập, mọi vai trò): các nhóm **Task mới · Đang làm · Có feedback · Chưa đăng ký · Trễ deadline** — bấm 1 dòng để mở chi tiết.
+- **Việc "Chưa đăng ký":** Leader/Trưởng/Phó phòng tạo việc **chưa giao** (nền cam, ghim đầu danh sách) → người đủ điều kiện bấm **🙋 Nhận việc**. Có thêm bộ lọc trạng thái *Chưa đăng ký*.
+- **Người tạo task** hiển thị ở mọi nơi; **bấm task** mở **popup xem nhanh chỉ-đọc**; **toggle Lưới ⇄ Chi tiết** cho danh sách việc.
+- **Tạo theo nhóm:** 1 "đầu việc chung" tách thành **nhiều việc con độc lập** (mỗi việc có mã/người nhận/trạng thái riêng), gắn cùng nhãn nhóm.
+- **Quyền:** Chuyên viên **xoá việc của chính mình**; Leader/Sub-lead/Trưởng/Phó phòng **ép đổi trạng thái** việc của người khác.
+- **Dashboard cá nhân = biểu đồ thanh ngang**; **Team Dashboard** thu gọn được + **lọc theo vai trò** + **4 bảng** (số task · TG hoàn thành TB · TG tạm hoãn TB · tỷ lệ **đúng/trễ/sớm** deadline).
+- **Nhân sự (HR):** lưới nhân sự **xếp A→Z theo tên**; bấm 1 người mở **hồ sơ** + danh sách việc (cá nhân/dự án) kèm **tiến độ**.
+- **Lịch:** **bấm vào 1 ngày** để mở danh sách việc đến hạn trong ngày đó.
+- **Dự án:** trang chi tiết **gom tự động theo Người thực hiện** (bảng đủ cột); **ngày sự kiện = ngày cuối**, mọi việc con phải có **hạn ≤ ngày sự kiện**.
+- Đổi **"Giao task vào dự án" → "Giao việc"**; thêm **"Hạn hoàn thành"** trong ô tải công việc; tách **Digital marketing → Digital marketing / Facebook / TikTok**.
 
 ---
 
