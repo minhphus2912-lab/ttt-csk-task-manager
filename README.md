@@ -71,6 +71,10 @@ Web app quản lý công việc nội bộ cho Trung Tâm Truyền Thông - Tổ
 - **Trang Dự án rộng hơn:** bỏ bố cục 2 cột chật → xếp dọc toàn chiều rộng; **tên việc xuống tối đa 2 dòng** (không bị cắt cụt).
 - **Tăng tốc (giảm lag):** điều hướng/bấm **render từ cache → tức thì**, KHÔNG tải lại Google Sheet mỗi lần bấm. Dữ liệu vẫn tươi nhờ **đồng bộ nền mỗi 5 phút** + **tự làm mới khi quay lại tab** + nút **🔄 Làm mới** thủ công ở thanh trên; mọi thao tác ghi (tạo/sửa/xoá/đổi trạng thái) vẫn làm mới ngay sau đó. (Thông báo việc mới & phát hiện "bị đá phiên" chạy theo nhịp 5 phút / khi quay lại tab.)
 
+### Mới ở v20.2 (tinh chỉnh)
+- **Bảng điều khiển — bấm vào chuyên viên** (tên ở bảng hoặc thẻ thanh) để mở **popup chi tiết các việc ĐANG CHẠY** của họ (kèm việc đang tạm dừng): mã · tên · mô tả · ưu tiên · độ khó · deadline · dự án · đã chạy bao lâu.
+- **Popup Tổng hợp / Thông báo — bộ lọc theo Người thực hiện:** chọn 1 người để lọc cả thẻ đếm lẫn 5 mục danh sách về đúng việc của người đó.
+
 ---
 
 ## 2. Xem trước trên máy (không cần Google)
