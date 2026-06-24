@@ -1106,10 +1106,60 @@
      { key:'overdue',   icon:'⏰', label:'Trễ deadline',                            color:'#dc2626',           fn:function(t){ return classifyDeadline(t)==='overdue'; } }
    ];
  }
+ // Bấm vào 1 chuyên viên ở Bảng điều khiển -> popup chi tiết các VIỆC ĐANG CHẠY của họ.
+ function openPersonTasks(code) {
+   var m = state.members.filter(function (x) { return x.code === code; })[0]; if (!m) return;
+   var mine = state.tasks.filter(function (t) { return t.assigneeCode === code; });
+   var running = mine.filter(function (t) { return t.status === STATUS.RUNNING; });
+   var paused = mine.filter(function (t) { return t.status === STATUS.PENDING; });
+   var byPri = function (a, b) { return (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2) || (a.deadline||'').localeCompare(b.deadline||''); };
+   var detailCard = function (t) {
+     var projName = t.projectId ? ((state.projects.filter(function (p) { return p.id === t.projectId; })[0]||{}).name || t.projectId) : '';
+     var st = instant(t.startedAt);
+     var ran = st ? fmtH(Math.max(0, (new Date().getTime() - st) / 3600000)) : '—';
+     return '<div class="card stack" style="padding:14px 16px;gap:6px">' +
+       '<div class="row row--between" style="align-items:flex-start;gap:8px"><b>' + esc(t.title) + '</b><span class="pill ' + (STATUS_CLASS[t.status]||'') + '"><span class="dot"></span>' + esc(t.status) + '</span></div>' +
+       '<div class="task-code mono">' + esc(t.taskCode) + '</div>' +
+       (t.description ? '<div class="text-sm muted">' + esc(t.description) + '</div>' : '') +
+       '<div class="row row--wrap" style="gap:6px;align-items:center">' +
+       '<span class="pri ' + (PRIORITY_CLASS[t.priority]||'') + '">' + esc(t.priority) + '</span>' +
+       '<span class="diff ' + (DIFF_CLASS[t.difficulty]||'') + '">' + esc(t.difficulty) + '</span>' +
+       (t.deadline ? '<span class="tag' + (classifyDeadline(t)==='overdue'?' tag--tre':'') + '">⏰ ' + esc(fmtDateVN(t.deadline)) + '</span>' : '') +
+       (projName ? '<span class="tag tag--project">🚀 ' + esc(projName) + '</span>' : '') +
+       '<span class="tag">⏱️ Đã chạy ' + ran + '</span>' +
+       (t.category ? '<span class="tag">🏷️ ' + esc(t.category) + '</span>' : '') +
+       '</div>' +
+       (/^https?:\/\//i.test(String(t.reportLink||'')) ? '<a class="btn btn--ghost btn--sm" href="' + esc(t.reportLink) + '" target="_blank" rel="noopener" style="align-self:flex-start">🔗 Link draft</a>' : '') +
+       '</div>';
+   };
+   var body = '<div class="row row--between" style="margin-bottom:6px"><b>⚙️ Việc đang chạy (' + running.length + ')</b></div>' +
+     (running.length ? '<div class="stack">' + running.slice().sort(byPri).map(detailCard).join('') + '</div>' : '<div class="empty text-sm" style="padding:12px">Hiện không có việc nào đang chạy.</div>');
+   if (paused.length) body += '<div class="row row--between" style="margin:16px 0 6px"><b>⏸️ Đang tạm dừng (' + paused.length + ')</b></div><div class="stack">' + paused.slice().sort(byPri).map(detailCard).join('') + '</div>';
+   var doneN = mine.filter(function (t) { return t.status === STATUS.DONE; }).length;
+   var html = '<div class="modal-head"><div class="row" style="gap:10px;align-items:center;min-width:0">' + avatarHtml(m, 40, null) + '<div style="min-width:0"><h2 style="font-size:20px">' + esc(m.name) + '</h2><div class="faint text-xs">' + esc(ROLE_LABEL[m.role] || m.role) + ' · ' + mine.length + ' việc · ' + doneN + ' hoàn thành</div></div></div><button class="icon-btn" data-action="close-modal">✕</button></div>' +
+     '<div class="modal-body">' + body + '</div>' +
+     '<div class="modal-foot"><button type="button" class="btn btn--primary" data-action="close-modal">Đóng</button></div>';
+   openModal(html, true);
+ }
  // Tổng hợp/Thông báo = POPUP hiện 1 lần mỗi khi vào hệ thống (không phải mục menu riêng).
  function openSummaryModal() {
    if (!state.user) return;
-   var tasks = state.tasks || [];
+   // Bộ lọc theo Người thực hiện (những mã có việc + viewer được phép thấy), xếp A→Z.
+   var who = {};
+   (state.tasks || []).forEach(function (t) { if (t.assigneeCode && canSeeMember(t.assigneeCode)) who[t.assigneeCode] = memberName(t.assigneeCode); });
+   var opts = Object.keys(who).map(function (c) { return { code: c, name: who[c] }; }).sort(function (a, b) { return String(a.name).localeCompare(String(b.name), 'vi'); });
+   var filterSel = '<select id="sum-filter" style="max-width:230px"><option value="">— Tất cả người thực hiện —</option>' + opts.map(function (o) { return '<option value="' + esc(o.code) + '">' + esc(o.name) + '</option>'; }).join('') + '</select>';
+   var html = '<div class="modal-head"><h2>🔔 Tổng hợp & Thông báo</h2><button class="icon-btn" data-action="close-modal">✕</button></div>' +
+     '<div class="modal-body">' +
+     '<div class="row row--between row--wrap" style="gap:10px;margin-bottom:8px;align-items:center"><div class="text-sm muted">Chào <b>' + esc(state.user.name) + '</b>! Tổng quan công việc cần chú ý:</div>' + filterSel + '</div>' +
+     '<div id="sum-body">' + summaryBodyHtml('') + '</div>' +
+     '</div><div class="modal-foot"><button type="button" class="btn btn--primary" data-action="close-modal">Bắt đầu làm việc →</button></div>';
+   openModal(html, true);
+   var sf = el('sum-filter'); if (sf) sf.addEventListener('change', function () { var b = el('sum-body'); if (b) b.innerHTML = summaryBodyHtml(this.value); });
+ }
+ // Nội dung popup Tổng hợp, lọc theo người thực hiện (filterCode rỗng = tất cả).
+ function summaryBodyHtml(filterCode) {
+   var tasks = (state.tasks || []).filter(function (t) { return !filterCode || t.assigneeCode === filterCode; });
    var bks = summaryBuckets();
    var cards = bks.map(function (bk) {
      var n = tasks.filter(bk.fn).length;
@@ -1126,12 +1176,7 @@
      }).join('') : '<div class="empty text-sm" style="padding:12px">Không có.</div>';
      return '<div style="margin-top:16px"><div class="row row--between" style="margin-bottom:6px"><b>' + bk.icon + ' ' + esc(bk.label) + '</b><span class="faint text-sm">' + arr.length + ' việc</span></div><div class="sum-list">' + rows + '</div></div>';
    }).join('');
-   var html = '<div class="modal-head"><h2>🔔 Tổng hợp & Thông báo</h2><button class="icon-btn" data-action="close-modal">✕</button></div>' +
-     '<div class="modal-body">' +
-     '<div class="text-sm muted" style="margin-bottom:8px">Chào <b>' + esc(state.user.name) + '</b>! Đây là tổng quan công việc cần chú ý:</div>' +
-     '<div class="grid-cards">' + cards + '</div>' + sections +
-     '</div><div class="modal-foot"><button type="button" class="btn btn--primary" data-action="close-modal">Bắt đầu làm việc →</button></div>';
-   openModal(html, true);
+   return '<div class="grid-cards">' + cards + '</div>' + sections;
  }
 
  function renderDashboard() {
@@ -1194,7 +1239,7 @@
    function tbl(headcells, rowsHtml, cols) {
      return '<div class="table-wrap"><table><thead><tr>' + headcells + '</tr></thead><tbody>' + (rowsHtml || '<tr><td colspan="' + (cols||6) + '" class="center muted text-sm">Chưa có dữ liệu.</td></tr>') + '</tbody></table></div>';
    }
-   var nameCell = function (d) { return '<td><b>' + esc(d.m.name) + '</b> <span class="role-badge ' + (ROLE_CLASS[d.m.role] || '') + '">' + esc(ROLE_LABEL[d.m.role] || d.m.role) + '</span></td>'; };
+   var nameCell = function (d) { return '<td data-action="person-tasks" data-code="' + esc(d.m.code) + '" style="cursor:pointer" title="Bấm xem việc đang chạy"><b style="color:var(--c-secondary-active)">' + esc(d.m.name) + '</b> <span class="role-badge ' + (ROLE_CLASS[d.m.role] || '') + '">' + esc(ROLE_LABEL[d.m.role] || d.m.role) + '</span></td>'; };
 
    var t1 = coll('t-count', '📊 Số lượng công việc', function () {
      var rows = data.map(function (d) { var bs = d.byStatus; return '<tr>' + nameCell(d) + '<td class="center">' + d.total + '</td><td class="center">' + (bs[STATUS.TODO]||0) + '</td><td class="center">' + ((bs[STATUS.RUNNING]||0)+(bs[STATUS.PENDING]||0)) + '</td><td class="center">' + (bs[STATUS.SENT]||0) + '</td><td class="center"><b style="color:#1e8040">' + (bs[STATUS.DONE]||0) + '</b></td></tr>'; }).join('');
@@ -1221,7 +1266,7 @@
        var tot = PRIORITY_ORDER.reduce(function (a, p) { return a + (d.pri[p] || 0); }, 0) || 1;
        var stacked = PRIORITY_ORDER.map(function (p) { var w = (d.pri[p] || 0) / tot * 100; return w > 0 ? '<div style="height:100%;width:' + w + '%;background:' + PRI_COLOR[p] + '" title="' + p + ': ' + (d.pri[p] || 0) + '"></div>' : ''; }).join('');
        return '<div class="card stack" style="padding:16px 18px">' +
-         '<div class="row row--between"><b>' + esc(d.m.name) + '</b><span class="role-badge ' + (ROLE_CLASS[d.m.role] || '') + '">' + esc(ROLE_LABEL[d.m.role] || d.m.role) + '</span></div>' +
+         '<div class="row row--between" data-action="person-tasks" data-code="' + esc(d.m.code) + '" style="cursor:pointer" title="Bấm xem việc đang chạy"><b style="color:var(--c-secondary-active)">' + esc(d.m.name) + '</b><span class="role-badge ' + (ROLE_CLASS[d.m.role] || '') + '">' + esc(ROLE_LABEL[d.m.role] || d.m.role) + '</span></div>' +
          barRow(d.total, maxT, '#17479D', 'Số task', d.total) +
          barRow(d.avgCycleH, maxC, '#34c759', 'TG hoàn thành TB', fmtH(d.avgCycleH)) +
          barRow(d.avgPauseH, maxP, '#ff9500', 'TG tạm hoãn TB', fmtH(d.avgPauseH)) +
@@ -2284,6 +2329,7 @@
    else if (action === 'cal-clear-day') { state.calSelectedDay = null; renderPage(); }
    else if (action === 'cal-toggle') { var _w = node.getAttribute('data-which'); state.calOpen = state.calOpen || {}; state.calOpen[_w] = !state.calOpen[_w]; renderPage(); }
    else if (action === 'team-toggle') { state.teamOpen = state.teamOpen || {}; var _tk = node.getAttribute('data-key'); state.teamOpen[_tk] = !state.teamOpen[_tk]; renderPage(); }
+   else if (action === 'person-tasks') openPersonTasks(node.getAttribute('data-code'));
    else if (action === 'scope') { state.scope = node.getAttribute('data-scope'); renderPage(); }
    else if (action === 'work-view') { state.workView = node.getAttribute('data-view'); renderPage(); }
    else if (action === 'work-tab') { state.workTab = node.getAttribute('data-tab'); state.selectedProjectId = null; renderPage(); }
