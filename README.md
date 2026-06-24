@@ -75,6 +75,10 @@ Web app quản lý công việc nội bộ cho Trung Tâm Truyền Thông - Tổ
 - **Bảng điều khiển — bấm vào chuyên viên** (tên ở bảng hoặc thẻ thanh) để mở **popup chi tiết các việc ĐANG CHẠY** của họ (kèm việc đang tạm dừng): mã · tên · mô tả · ưu tiên · độ khó · deadline · dự án · đã chạy bao lâu.
 - **Popup Tổng hợp / Thông báo — bộ lọc theo Người thực hiện:** chọn 1 người để lọc cả thẻ đếm lẫn 5 mục danh sách về đúng việc của người đó.
 
+### Mới ở v20.3 (tinh chỉnh)
+- **Thông báo nhận việc nhanh hơn:** đồng bộ nền **5 phút → 30 giây** nên việc mới được giao hiện thông báo trong ~30s; toast **"🎁 Quà tặng công việc"** nổi bật, ở lâu **9 giây** + tiếng ting (đây là kênh đáng tin cậy vì thông báo hệ điều hành thường bị iframe Google chặn). Mỗi việc chỉ báo **đúng 1 lần** (idempotent, không nhân đôi khi nhiều lần làm mới chồng nhau).
+- **Giao diện rộng hơn & thanh điều hướng tuỳ biến:** vùng nội dung nới rộng (**1440px**); thanh điều hướng **gọn hơn** (đỡ phải cuộn) và có nút **⮜/⮞ thu gọn** thành thanh icon để mở rộng vùng làm việc — trạng thái thu gọn được **ghi nhớ**.
+
 ---
 
 ## 2. Xem trước trên máy (không cần Google)
