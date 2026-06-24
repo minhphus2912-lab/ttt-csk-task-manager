@@ -188,11 +188,20 @@ a:hover { text-decoration: underline; }
 
 /* Popup Tổng hợp/Thông báo (hiện 1 lần mỗi lần vào) */
 .sum-list { display: flex; flex-direction: column; gap: 6px; }
-.sum-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; background: rgba(255,255,255,0.4); border: var(--glass-border-light); border-radius: 14px; }
+.sum-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; background: rgba(255,255,255,0.4); border: var(--glass-border-light); border-radius: 14px; }
 .sum-row--unclaimed { background: rgba(238,104,35,0.10); border-color: rgba(238,104,35,0.4); }
-.sum-row .tr-code { font-size: 11px; color: var(--c-text-faint); min-width: 96px; }
+/* Mã rút gọn = badge nhỏ, không chiếm cột rộng cố định */
+.sum-row .tr-code { font-size: 10.5px; color: var(--c-text-muted); white-space: nowrap; background: rgba(0,0,0,0.05); padding: 3px 8px; border-radius: 8px; }
+.sum-row .sum-main { min-width: 0; }
 .sum-row .sum-title { font-weight: 600; font-size: 14px; line-height: 1.3; }
 .sum-row .sum-sub { font-size: 11.5px; margin-top: 2px; }
+/* Điện thoại: mã + trạng thái 1 hàng trên, nội dung xuống hàng dưới (full width) -> cân đối */
+@media (max-width: 560px) {
+  .sum-row { grid-template-columns: auto 1fr; grid-template-areas: "code pill" "main main"; gap: 6px 10px; padding: 10px; }
+  .sum-row .tr-code { grid-area: code; justify-self: start; }
+  .sum-row > .pill { grid-area: pill; justify-self: end; }
+  .sum-row .sum-main { grid-area: main; }
+}
 
 /* Cắt tiêu đề tối đa 2 dòng (bảng dự án) */
 .clamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35; }
@@ -752,6 +761,8 @@ input:focus, select:focus, textarea:focus { outline: none; background: rgba(255,
  }
  // Trả TÊN nếu viewer được phép thấy mã đó; nếu không (server đã lọc ẩn) -> "—" để KHÔNG lộ mã/nhân sự cấp cao/khác silo.
  function memberName(code) { var m = state.members.filter(function (x) { return x.code === code; })[0]; return m ? m.name : (code ? '—' : ''); }
+ // Mã rút gọn để hiển thị (bỏ hậu tố người-nhận/CHUA ở cuối): "20260520-001-TT01" -> "20260520-001". Giữ phần định danh duy nhất (prefix-seq).
+ function shortTaskCode(code) { var p = String(code || '').split('-'); return p.length >= 3 ? p.slice(0, -1).join('-') : String(code || ''); }
 
  // =========================================================================
  // MOCK DB
@@ -1695,7 +1706,7 @@ input:focus, select:focus, textarea:focus { outline: none; background: rgba(255,
      var arr = tasks.filter(bk.fn).slice().sort(function (a, b) { return (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2) || (a.deadline||'').localeCompare(b.deadline||''); });
      var rows = arr.length ? arr.map(function (t) {
        return '<div class="sum-row' + (isUnclaimed(t) ? ' sum-row--unclaimed' : '') + '">' +
-         '<span class="tr-code mono">' + esc(t.taskCode) + '</span>' +
+         '<span class="tr-code mono" title="' + esc(t.taskCode) + '">' + esc(shortTaskCode(t.taskCode)) + '</span>' +
          '<div class="sum-main"><div class="sum-title">' + esc(t.title) + '</div>' +
          '<div class="sum-sub faint">👤 ' + (isUnclaimed(t) ? 'Chưa giao' : esc(memberName(t.assigneeCode))) + ' · 🖊️ ' + esc(memberName(t.createdBy)) + (t.deadline ? ' · ⏰ ' + esc(fmtDateVN(t.deadline)) : '') + '</div></div>' +
          '<span class="pill ' + (STATUS_CLASS[t.status]||'') + '"><span class="dot"></span>' + esc(t.status) + '</span></div>';

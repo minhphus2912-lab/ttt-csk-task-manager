@@ -234,6 +234,8 @@
  }
  // Trả TÊN nếu viewer được phép thấy mã đó; nếu không (server đã lọc ẩn) -> "—" để KHÔNG lộ mã/nhân sự cấp cao/khác silo.
  function memberName(code) { var m = state.members.filter(function (x) { return x.code === code; })[0]; return m ? m.name : (code ? '—' : ''); }
+ // Mã rút gọn để hiển thị (bỏ hậu tố người-nhận/CHUA ở cuối): "20260520-001-TT01" -> "20260520-001". Giữ phần định danh duy nhất (prefix-seq).
+ function shortTaskCode(code) { var p = String(code || '').split('-'); return p.length >= 3 ? p.slice(0, -1).join('-') : String(code || ''); }
 
  // =========================================================================
  // MOCK DB
@@ -1177,7 +1179,7 @@
      var arr = tasks.filter(bk.fn).slice().sort(function (a, b) { return (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2) || (a.deadline||'').localeCompare(b.deadline||''); });
      var rows = arr.length ? arr.map(function (t) {
        return '<div class="sum-row' + (isUnclaimed(t) ? ' sum-row--unclaimed' : '') + '">' +
-         '<span class="tr-code mono">' + esc(t.taskCode) + '</span>' +
+         '<span class="tr-code mono" title="' + esc(t.taskCode) + '">' + esc(shortTaskCode(t.taskCode)) + '</span>' +
          '<div class="sum-main"><div class="sum-title">' + esc(t.title) + '</div>' +
          '<div class="sum-sub faint">👤 ' + (isUnclaimed(t) ? 'Chưa giao' : esc(memberName(t.assigneeCode))) + ' · 🖊️ ' + esc(memberName(t.createdBy)) + (t.deadline ? ' · ⏰ ' + esc(fmtDateVN(t.deadline)) : '') + '</div></div>' +
          '<span class="pill ' + (STATUS_CLASS[t.status]||'') + '"><span class="dot"></span>' + esc(t.status) + '</span></div>';
