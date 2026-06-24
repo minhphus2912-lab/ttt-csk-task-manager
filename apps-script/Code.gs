@@ -32,6 +32,10 @@ var SH_TASKS   = 'Tasks';
 var SH_PROJECTS = 'Projects';
 var SH_KPI     = 'KpiTargets';
 var SH_CONFIG  = 'Config';
+var SH_CHATS    = 'Chats';
+var SH_MESSAGES = 'Messages';
+var CHAT_COLS = ['id', 'type', 'name', 'memberCodes', 'createdBy', 'createdAt'];
+var MSG_COLS  = ['id', 'chatId', 'senderCode', 'kind', 'body', 'createdAt'];
 
 var ROLE = {
   HEAD: 'TRUONG_PHONG', DEPUTY: 'PHO_PHONG', STAFF: 'CHUYEN_VIEN',
@@ -110,10 +114,12 @@ function apiFunctions_() {
   return {
     bootstrap: bootstrap, login: login, logout: logout, getState: getState,
     createTask: createTask, transitionTask: transitionTask, updateTaskNote: updateTaskNote,
-    updateTask: updateTask, deleteTask: deleteTask,
+    updateTask: updateTask, deleteTask: deleteTask, setTaskDeadline: setTaskDeadline,
     createProject: createProject, updateProject: updateProject, completeProject: completeProject, deleteProject: deleteProject,
     changePassword: changePassword, setKpiTarget: setKpiTarget, setCrewRole: setCrewRole, setGrant: setGrant,
     saveAvatar: saveAvatar, upsertMember: upsertMember, deleteMember: deleteMember, addCrewMember: addCrewMember, updateCrewMember: updateCrewMember,
+    listChats: listChats, getMessages: getMessages, sendMessage: sendMessage, createDM: createDM, createGroup: createGroup,
+    renameGroup: renameGroup, addChatMembers: addChatMembers, removeChatMember: removeChatMember, deleteGroup: deleteGroup,
     aiGenerate: aiGenerate, resetToSeed: resetToSeed
   };
 }
@@ -141,7 +147,7 @@ function getSS_() {
   return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActive();
 }
 
-var KNOWN_SHEETS = [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG];
+var KNOWN_SHEETS = [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG, SH_CHATS, SH_MESSAGES];
 function getSheet_(name) {
   var ss = getSS_();
   var sh = ss.getSheetByName(name);
@@ -302,8 +308,22 @@ function getUser_(token) {
     if (activeTok && activeTok !== token) throw err_('SESSION_KICKED');
   } catch (e) { if (e && /SESSION_KICKED/.test(e.message)) throw e; /* property lỗi -> bỏ qua check */ }
   cache.put('S_' + token, code, SESSION_TTL); // gia hạn
+  touchPresence_(code); // cập nhật "online" mỗi lần gọi API (kể cả poll)
   var m = readMembers_().filter(function (x) { return x.code === code && x.active; })[0];
   return m ? publicMember_(m) : null;
+}
+
+// ----- Hiện diện (online) — dựa trên "last seen" lưu ở CacheService (không tốn quota Properties) -----
+var ONLINE_WINDOW_MS = 150000; // 2.5 phút: poll nền 30s + chat 6s -> còn hoạt động trong cửa sổ này = online
+function touchPresence_(code) { try { CacheService.getScriptCache().put('SEEN_' + code, String(new Date().getTime()), 1800); } catch (e) {} }
+function presenceMap_(codes) {
+  var out = {}, now = new Date().getTime(), cache = CacheService.getScriptCache();
+  (codes || []).forEach(function (c) {
+    if (!c || out[c] !== undefined) return;
+    var seen = cache.get('SEEN_' + c);
+    out[c] = !!(seen && (now - Number(seen) < ONLINE_WINDOW_MS));
+  });
+  return out;
 }
 
 function requireUser_(token) {
@@ -475,7 +495,8 @@ function readKpiTargets_() {
 // v12: thêm cột avatar, MULTIMEDIA -> THANH_VIEN, đổi tên đơn vị.
 // v13: thêm cột task category, completeLink, phatSinh.
 // v14: thêm cột task batchName (gom việc con cùng "đầu việc chung").
-var MIG_VERSION = '14';
+// v15: thêm sheet Chats + Messages (mục Tin nhắn / chat).
+var MIG_VERSION = '15';
 function ensureMigrated_() {
   try {
     var props = PropertiesService.getScriptProperties();
@@ -802,6 +823,33 @@ function updateTaskNote(token, taskCode, note) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/** Đặt/đổi HẠN của task bằng KÉO-THẢ trên lịch (tự điền ngày, không cần mở form sửa). */
+function setTaskDeadline(token, taskCode, deadline) {
+  var u = requireUser_(token);
+  var dl = normalizeDate_(deadline);
+  if (!dl) throw err_('Ngày không hợp lệ.');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_TASKS);
+    var values = sh.getDataRange().getValues();
+    var rowIdx = -1;
+    for (var i = 1; i < values.length; i++) { if (String(values[i][0]) === String(taskCode)) { rowIdx = i; break; } }
+    if (rowIdx < 0) throw err_('Không tìm thấy công việc.');
+    var t = taskObjFromRow_(values[rowIdx]);
+    if (!canEditTask_(u, t) && t.assigneeCode !== u.code) throw err_('Bạn không có quyền đổi hạn công việc này.');
+    if (t.projectId) {
+      var prj = readProjects_().filter(function (p) { return p.id === t.projectId; })[0];
+      if (prj && prj.eventDate && dl > prj.eventDate) throw err_('Hạn không được trễ hơn ngày sự kiện của dự án (' + prj.eventDate + ').');
+    }
+    t.deadline = dl;
+    var newRow = taskToRow_(t);
+    sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
+    t.projectId = t.projectId || null;
+    return t;
+  } finally { lock.releaseLock(); }
 }
 
 /** Sửa thông tin task (title/desc/assignee/difficulty/priority/deadline/note). Giữ nguyên trạng thái & timestamps. */
@@ -1332,6 +1380,176 @@ function changePassword(token, oldPin, newPin) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// ===========================================================================
+// API: TIN NHẮN / CHAT (Chats + Messages) — bảo mật theo thành viên hội thoại.
+// ===========================================================================
+function chatObjFromRow_(row) {
+  var members = [];
+  try { var raw = String(row[3] || '').trim(); if (raw) members = raw.charAt(0) === '[' ? JSON.parse(raw) : raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean); } catch (e) { members = []; }
+  return { id: String(row[0] || '').trim(), type: String(row[1] || '').trim() || 'group', name: String(row[2] || ''), memberCodes: members, createdBy: String(row[4] || '').trim(), createdAt: cellToDateStr_(row[5], true) };
+}
+function chatToRow_(c) { return [c.id, c.type, c.name || '', JSON.stringify(c.memberCodes || []), c.createdBy || '', c.createdAt || nowIso_()]; }
+function readChats_() {
+  var sh = getSheet_(SH_CHATS); var v = sh.getDataRange().getValues(); var out = [];
+  for (var i = 1; i < v.length; i++) { if (String(v[i][0]).trim()) out.push(chatObjFromRow_(v[i])); }
+  return out;
+}
+function msgObjFromRow_(row) {
+  return { id: Number(row[0]) || 0, chatId: String(row[1] || '').trim(), senderCode: String(row[2] || '').trim(), kind: String(row[3] || 'text'), body: String(row[4] == null ? '' : row[4]), createdAt: cellToDateStr_(row[5], true) };
+}
+function readMessages_() {
+  var sh = getSheet_(SH_MESSAGES); var v = sh.getDataRange().getValues(); var out = [];
+  for (var i = 1; i < v.length; i++) { if (String(v[i][0]).trim()) out.push(msgObjFromRow_(v[i])); }
+  return out;
+}
+function isChatMember_(chat, code) { return chat && (chat.memberCodes || []).indexOf(code) >= 0; }
+function findChat_(chats, id) { for (var i = 0; i < chats.length; i++) if (chats[i].id === id) return chats[i]; return null; }
+function writeChat_(chat) {
+  var sh = getSheet_(SH_CHATS); var v = sh.getDataRange().getValues();
+  for (var i = 1; i < v.length; i++) { if (String(v[i][0]).trim() === chat.id) { var r = chatToRow_(chat); sh.getRange(i + 1, 1, 1, r.length).setValues([r]); return; } }
+  sh.appendRow(chatToRow_(chat));
+}
+
+/** Đảm bảo nhóm chat MẶC ĐỊNH của phòng/bộ phận tồn tại & có user. (createdBy='SYSTEM' = không xoá/sửa được) */
+function ensureDefaultGroups_(u) {
+  var chats = readChats_(), members = readMembers_(), changed = false;
+  function ensure(id, name, inSilo) {
+    var c = findChat_(chats, id);
+    if (!c) {
+      c = { id: id, type: 'group', name: name, memberCodes: members.filter(function (m) { return m.active && inSilo(m.role); }).map(function (m) { return m.code; }), createdBy: 'SYSTEM', createdAt: nowIso_() };
+      writeChat_(c); chats.push(c); changed = true;
+    } else if (c.memberCodes.indexOf(u.code) < 0) { c.memberCodes.push(u.code); writeChat_(c); changed = true; }
+  }
+  if (hasDeptBoard_(u.role)) ensure('GRP-DEPT', getConfigValue_('DepartmentName', 'Trung Tâm Truyền Thông - Tổ Chức Sự Kiện'), function (r) { return !isCrewRole_(r); });
+  if (canViewCrew_(u)) ensure('GRP-CREW', 'Production Crew', function (r) { return isCrewRole_(r); });
+  return changed;
+}
+
+function listChats(token) {
+  var u = requireUser_(token);
+  ensureDefaultGroups_(u);
+  var chats = readChats_().filter(function (c) { return isChatMember_(c, u.code); });
+  var msgs = readMessages_();
+  var lastBy = {};
+  msgs.forEach(function (m) { var p = lastBy[m.chatId]; if (!p || m.id > p.id) lastBy[m.chatId] = m; });
+  var allMembers = readMembers_();
+  var nameOf = {}; allMembers.forEach(function (m) { nameOf[m.code] = m.name; });
+  var list = chats.map(function (c) {
+    var other = (c.type === 'dm') ? (c.memberCodes.filter(function (x) { return x !== u.code; })[0] || '') : '';
+    var disp = (c.type === 'dm') ? (nameOf[other] || other || 'Người dùng') : c.name;
+    var last = lastBy[c.id] || null;
+    return { id: c.id, type: c.type, name: disp, rawName: c.name, memberCodes: c.memberCodes, createdBy: c.createdBy, isSystem: c.createdBy === 'SYSTEM', otherCode: other,
+      last: last ? { senderCode: last.senderCode, kind: last.kind, body: last.kind === 'sticker' ? '[Sticker]' : last.body, createdAt: last.createdAt } : null,
+      lastAt: last ? last.createdAt : c.createdAt };
+  }).sort(function (a, b) { return String(b.lastAt || '').localeCompare(String(a.lastAt || '')); });
+  // Roster để bắt đầu hội thoại mới (chỉ tên/vai trò — KHÔNG nhạy cảm).
+  var roster = allMembers.filter(function (m) { return m.active && m.code !== u.code; }).map(function (m) { return { code: m.code, name: m.name, role: m.role, avatar: m.avatar || '' }; });
+  // Trạng thái online cho mọi mã xuất hiện (đốm xanh/xám). Bản thân = online.
+  var allCodes = allMembers.map(function (m) { return m.code; });
+  var online = presenceMap_(allCodes); online[u.code] = true;
+  return { chats: list, roster: roster, me: u.code, online: online };
+}
+
+function getMessages(token, chatId, sinceId) {
+  var u = requireUser_(token);
+  var chat = findChat_(readChats_(), String(chatId));
+  if (!chat || !isChatMember_(chat, u.code)) throw err_('Bạn không có quyền xem hội thoại này.');
+  var since = Number(sinceId) || 0;
+  var msgs = readMessages_().filter(function (m) { return m.chatId === chat.id && m.id > since; }).sort(function (a, b) { return a.id - b.id; });
+  var nm = {}; readMembers_().forEach(function (m) { nm[m.code] = m.name; });
+  msgs.forEach(function (m) { m.senderName = nm[m.senderCode] || m.senderCode; });
+  return { messages: msgs };
+}
+
+function sendMessage(token, chatId, kind, body) {
+  var u = requireUser_(token);
+  kind = (kind === 'sticker') ? 'sticker' : 'text';
+  body = String(body == null ? '' : body).trim();
+  if (!body) throw err_('Nội dung trống.');
+  if (body.length > 4000) throw err_('Tin nhắn quá dài.');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var chat = findChat_(readChats_(), String(chatId));
+    if (!chat || !isChatMember_(chat, u.code)) throw err_('Bạn không có quyền gửi vào hội thoại này.');
+    var sh = getSheet_(SH_MESSAGES); var v = sh.getDataRange().getValues(); var maxId = 0;
+    for (var i = 1; i < v.length; i++) { var n = Number(v[i][0]); if (n > maxId) maxId = n; }
+    var msg = { id: maxId + 1, chatId: chat.id, senderCode: u.code, kind: kind, body: body, createdAt: nowIso_() };
+    sh.appendRow([msg.id, msg.chatId, msg.senderCode, msg.kind, msg.body, msg.createdAt]);
+    return msg;
+  } finally { lock.releaseLock(); }
+}
+
+function createDM(token, otherCode) {
+  var u = requireUser_(token);
+  otherCode = String(otherCode || '').trim();
+  var other = readMembers_().filter(function (m) { return m.code === otherCode && m.active; })[0];
+  if (!other || other.code === u.code) throw err_('Người nhận không hợp lệ.');
+  var chats = readChats_();
+  var existing = chats.filter(function (c) { return c.type === 'dm' && c.memberCodes.length === 2 && c.memberCodes.indexOf(u.code) >= 0 && c.memberCodes.indexOf(other.code) >= 0; })[0];
+  if (existing) return { id: existing.id };
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var id = 'DM-' + uuid_().substring(0, 8);
+    writeChat_({ id: id, type: 'dm', name: '', memberCodes: [u.code, other.code], createdBy: u.code, createdAt: nowIso_() });
+    return { id: id };
+  } finally { lock.releaseLock(); }
+}
+
+function createGroup(token, name, memberCodes) {
+  var u = requireUser_(token);
+  name = String(name || '').trim();
+  if (!name) throw err_('Vui lòng nhập tên nhóm.');
+  var active = {}; readMembers_().forEach(function (m) { if (m.active) active[m.code] = true; });
+  var mem = [u.code];
+  (Array.isArray(memberCodes) ? memberCodes : []).forEach(function (c) { c = String(c).trim(); if (active[c] && mem.indexOf(c) < 0) mem.push(c); });
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var id = 'GRP-' + uuid_().substring(0, 8);
+    writeChat_({ id: id, type: 'group', name: name, memberCodes: mem, createdBy: u.code, createdAt: nowIso_() });
+    return { id: id };
+  } finally { lock.releaseLock(); }
+}
+
+function chatManageable_(chat, u) {
+  if (!chat) throw err_('Không tìm thấy nhóm.');
+  if (chat.type !== 'group') throw err_('Chỉ áp dụng cho nhóm.');
+  if (chat.createdBy === 'SYSTEM') throw err_('Không thể chỉnh sửa nhóm mặc định của phòng.');
+  if (chat.createdBy !== u.code) throw err_('Chỉ người tạo nhóm mới được quản lý nhóm.');
+}
+function renameGroup(token, chatId, name) {
+  var u = requireUser_(token); name = String(name || '').trim(); if (!name) throw err_('Tên nhóm trống.');
+  var chat = findChat_(readChats_(), String(chatId)); chatManageable_(chat, u);
+  chat.name = name; writeChat_(chat); return { ok: true };
+}
+function addChatMembers(token, chatId, codes) {
+  var u = requireUser_(token);
+  var chat = findChat_(readChats_(), String(chatId)); chatManageable_(chat, u);
+  var active = {}; readMembers_().forEach(function (m) { if (m.active) active[m.code] = true; });
+  (Array.isArray(codes) ? codes : [codes]).forEach(function (c) { c = String(c).trim(); if (active[c] && chat.memberCodes.indexOf(c) < 0) chat.memberCodes.push(c); });
+  writeChat_(chat); return { ok: true };
+}
+function removeChatMember(token, chatId, code) {
+  var u = requireUser_(token); code = String(code || '').trim();
+  var chat = findChat_(readChats_(), String(chatId)); chatManageable_(chat, u);
+  if (code === chat.createdBy) throw err_('Không thể xoá người tạo nhóm.');
+  chat.memberCodes = chat.memberCodes.filter(function (x) { return x !== code; });
+  writeChat_(chat); return { ok: true };
+}
+function deleteGroup(token, chatId) {
+  var u = requireUser_(token);
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_CHATS); var v = sh.getDataRange().getValues(); var rowIdx = -1, chat = null;
+    for (var i = 1; i < v.length; i++) { if (String(v[i][0]).trim() === String(chatId)) { rowIdx = i; chat = chatObjFromRow_(v[i]); break; } }
+    chatManageable_(chat, u);
+    sh.deleteRow(rowIdx + 1);
+    // Xoá tin nhắn của nhóm
+    var ms = getSheet_(SH_MESSAGES); var mv = ms.getDataRange().getValues();
+    for (var j = mv.length - 1; j >= 1; j--) { if (String(mv[j][1]).trim() === String(chatId)) ms.deleteRow(j + 1); }
+    return { ok: true };
+  } finally { lock.releaseLock(); }
 }
 
 // ---------------------------------------------------------------------------

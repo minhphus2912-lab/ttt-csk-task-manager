@@ -46,6 +46,8 @@ function setup_(withDemo) {
   ensureSheet_(ss, SH_PROJECTS, PROJECT_COLS);
   ensureSheet_(ss, SH_KPI, KPI_COLS);
   ensureSheet_(ss, SH_CONFIG, ['key', 'value', 'mô tả']);
+  ensureSheet_(ss, SH_CHATS, CHAT_COLS);
+  ensureSheet_(ss, SH_MESSAGES, MSG_COLS);
 
   migrate_(); // đảm bảo sheet Tasks cũ có đủ cột mới
 
@@ -63,7 +65,7 @@ function setup_(withDemo) {
   if (withDemo) seedDemo_();
 
   // Định dạng tiêu đề cho dễ nhìn
-  [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG].forEach(function (n) {
+  [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG, SH_CHATS, SH_MESSAGES].forEach(function (n) {
     var sh = ss.getSheetByName(n);
     if (!sh || sh.getLastColumn() === 0) return;
     sh.setFrozenRows(1);
@@ -86,6 +88,10 @@ function ensureSheet_(ss, name, headers) {
 function migrate_() {
   migrateSheetCols_(SH_TASKS, TASK_COLS);
   migrateSheetCols_(SH_MEMBERS, MEMBER_COLS); // thêm cột 'grants', 'avatar' cho sheet cũ
+  // Tin nhắn/chat: tạo sheet nếu chưa có (deploy cũ chưa có 2 sheet này).
+  var ss = getSS_();
+  ensureSheet_(ss, SH_CHATS, CHAT_COLS);
+  ensureSheet_(ss, SH_MESSAGES, MSG_COLS);
   migrateRolesAndConfig_();
 }
 
