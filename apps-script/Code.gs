@@ -515,7 +515,8 @@ function readKpiTargets_() {
 // v14: thêm cột task batchName (gom việc con cùng "đầu việc chung").
 // v15: thêm sheet Chats + Messages (mục Tin nhắn / chat).
 // v16: thêm cột task assigneeCodes (nhiều người thực hiện trong 1 task; tương thích ngược -> [assigneeCode]).
-var MIG_VERSION = '16';
+// v17: định dạng lại MỌI sheet cho gọn gàng (header, kẻ sọc, bề rộng cột, clip) qua formatSheets_().
+var MIG_VERSION = '17';
 function ensureMigrated_() {
   try {
     var props = PropertiesService.getScriptProperties();

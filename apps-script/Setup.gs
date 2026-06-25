@@ -64,13 +64,7 @@ function setup_(withDemo) {
 
   if (withDemo) seedDemo_();
 
-  // Định dạng tiêu đề cho dễ nhìn
-  [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG, SH_CHATS, SH_MESSAGES].forEach(function (n) {
-    var sh = ss.getSheetByName(n);
-    if (!sh || sh.getLastColumn() === 0) return;
-    sh.setFrozenRows(1);
-    sh.getRange(1, 1, 1, sh.getLastColumn()).setFontWeight('bold').setBackground('#17179d').setFontColor('#fff');
-  });
+  formatSheets_(); // định dạng toàn bộ sheet cho gọn gàng, dễ nhìn
 
   Logger.log('runSetup hoàn tất. Deploy: New deployment → Web app → Execute as Me, Anyone (anonymous).');
 }
@@ -93,6 +87,53 @@ function migrate_() {
   ensureSheet_(ss, SH_CHATS, CHAT_COLS);
   ensureSheet_(ss, SH_MESSAGES, MSG_COLS);
   migrateRolesAndConfig_();
+  formatSheets_(); // mỗi lần migrate -> định dạng lại sheet cho gọn gàng
+}
+
+// Bề rộng cột gợi ý theo TÊN cột (px). Cột không liệt kê -> 110. Cột "dài/xấu" (avatar base64, pinHash, mô tả, link) -> hẹp + clip.
+var COL_WIDTHS_ = {
+  taskCode: 150, title: 250, description: 210, assigneeCode: 92, assigneeCodes: 150, difficulty: 95, kpiPoint: 62,
+  status: 116, createdBy: 96, createdAt: 142, startedAt: 142, submittedAt: 142, completedAt: 142, lastPausedAt: 142,
+  deadline: 106, reportLink: 150, completeLink: 150, note: 190, priority: 102, pauseHours: 82,
+  projectId: 116, crewTask: 74, category: 132, phatSinh: 74, batchName: 150,
+  code: 86, name: 162, pinHash: 92, role: 132, active: 64, grants: 116, avatar: 90,
+  id: 142, leadCode: 96, memberCodes: 172, eventDate: 110,
+  memberCode: 116, target: 82,
+  key: 172, value: 240, 'mô tả': 300,
+  type: 76, chatId: 142, senderCode: 106, kind: 76, body: 320
+};
+// Định dạng MỌI sheet cho dễ nhìn: đóng băng + tô header, kẻ sọc xen kẽ, set bề rộng cột, clip tràn, định dạng ngày.
+// Bọc try/catch từng thao tác -> mock harness (thiếu API định dạng) vẫn chạy bình thường, GAS thật áp dụng đầy đủ.
+function formatSheets_() {
+  var ss = getSS_();
+  [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG, SH_CHATS, SH_MESSAGES].forEach(function (n) {
+    var sh = ss.getSheetByName(n);
+    if (!sh || sh.getLastColumn() === 0) return;
+    var lastCol = sh.getLastColumn();
+    var lastRow = Math.max(sh.getLastRow(), 1);
+    var headers = [];
+    try { headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function (x) { return String(x).trim(); }); } catch (e) {}
+    try { sh.setFrozenRows(1); } catch (e) {}
+    try { sh.getRange(1, 1, 1, lastCol).setFontWeight('bold').setBackground('#17179d').setFontColor('#ffffff').setVerticalAlignment('middle').setHorizontalAlignment('left'); } catch (e) {}
+    try { sh.setRowHeight(1, 32); } catch (e) {}
+    // Kẻ sọc xen kẽ (gỡ banding cũ trước khi áp mới -> idempotent).
+    try {
+      var bs = sh.getBandings ? sh.getBandings() : [];
+      for (var i = 0; i < bs.length; i++) { try { bs[i].remove(); } catch (e2) {} }
+      sh.getRange(1, 1, lastRow, lastCol).applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, true, false);
+    } catch (e) {}
+    // Không cho chữ tràn + canh giữa theo chiều dọc -> hàng đều, gọn.
+    try { sh.getRange(1, 1, lastRow, lastCol).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP).setVerticalAlignment('middle'); } catch (e) {}
+    // Bề rộng cột theo TÊN.
+    for (var c = 0; c < headers.length; c++) {
+      try { sh.setColumnWidth(c + 1, COL_WIDTHS_[headers[c]] || 110); } catch (e) {}
+    }
+    // Cột ngày-thuần (Sheets ép thành Date) -> định dạng yyyy-mm-dd.
+    ['deadline', 'eventDate'].forEach(function (dc) {
+      var idx = headers.indexOf(dc);
+      if (idx >= 0 && lastRow > 1) { try { sh.getRange(2, idx + 1, lastRow - 1, 1).setNumberFormat('yyyy-mm-dd'); } catch (e) {} }
+    });
+  });
 }
 
 /** Di trú dữ liệu cũ (idempotent):
