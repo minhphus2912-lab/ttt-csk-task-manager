@@ -331,6 +331,12 @@ input:focus, select:focus, textarea:focus { outline: none; background: rgba(255,
 
 /* Hover Background */
 .nav-link:hover { background: rgba(255,255,255,0.2); color: var(--c-text); border-color: rgba(255,255,255,0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.02); }
+/* Badge SỐ TIN NHẮN MỚI: góc phải-trên icon Tin nhắn + trong danh sách hội thoại */
+.nav-link .ni { position: relative; }
+.nav-badge { position: absolute; top: -5px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #ff3b30; color: #fff; font-size: 10px; font-weight: 800; align-items: center; justify-content: center; line-height: 1; box-shadow: 0 1px 5px rgba(255,59,48,0.55); z-index: 6; }
+.cl-unread { margin-left: auto; align-self: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: #ff3b30; color: #fff; font-size: 11px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.chat-li.has-unread .cl-name { font-weight: 800; }
+.chat-li.has-unread .cl-last { color: var(--c-text); font-weight: 600; }
 
 /* Hover: ô KHÔNG xoay (chỉ đổi nền kính); glyph bên trong xoay ngang. */
 .nav-link:hover .ni {

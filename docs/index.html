@@ -341,6 +341,12 @@ input:focus, select:focus, textarea:focus { outline: none; background: rgba(255,
 
 /* Hover Background */
 .nav-link:hover { background: rgba(255,255,255,0.2); color: var(--c-text); border-color: rgba(255,255,255,0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.02); }
+/* Badge SỐ TIN NHẮN MỚI: góc phải-trên icon Tin nhắn + trong danh sách hội thoại */
+.nav-link .ni { position: relative; }
+.nav-badge { position: absolute; top: -5px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #ff3b30; color: #fff; font-size: 10px; font-weight: 800; align-items: center; justify-content: center; line-height: 1; box-shadow: 0 1px 5px rgba(255,59,48,0.55); z-index: 6; }
+.cl-unread { margin-left: auto; align-self: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: #ff3b30; color: #fff; font-size: 11px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.chat-li.has-unread .cl-name { font-weight: 800; }
+.chat-li.has-unread .cl-last { color: var(--c-text); font-weight: 600; }
 
 /* Hover: ô KHÔNG xoay (chỉ đổi nền kính); glyph bên trong xoay ngang. */
 .nav-link:hover .ni {
@@ -775,6 +781,8 @@ thead th{ background: rgba(255,255,255,0.34); }
  function assigneeCount(t) { return assigneesOf(t).length; }
  // Chuỗi tên người thực hiện (RAW, caller tự esc) — 'Chưa giao' nếu chưa có ai.
  function assigneeNames(t) { var cs = assigneesOf(t); return cs.length ? cs.map(function (c) { return memberName(c); }).join(', ') : 'Chưa giao'; }
+ // Tên NGƯỜI TẠO task — ưu tiên createdByName server gắn vào (hiện được cả khi người tạo bị ẩn theo cấp bậc), fallback memberName.
+ function creatorName(t) { return (t && t.createdByName) ? t.createdByName : memberName(t ? t.createdBy : ''); }
  var DIFF_ORDER = ['Dễ', 'Bình thường', 'Nâng cao', 'Khó'];
  var DIFF_CLASS = { 'Dễ': 'diff--easy', 'Bình thường': 'diff--normal', 'Nâng cao': 'diff--high', 'Khó': 'diff--hard' };
  var PRIORITY_ORDER = ['Thấp', 'Bình thường', 'Cao', 'Khẩn cấp'];
@@ -926,17 +934,18 @@ thead th{ background: rgba(255,255,255,0.34); }
    var p = d.split('-'); return p[2] + '/' + p[1] + '/' + p[0];
  }
  // Trả TÊN nếu viewer được phép thấy mã đó; nếu không (server đã lọc ẩn) -> "—" để KHÔNG lộ mã/nhân sự cấp cao/khác silo.
- function memberName(code) { var m = state.members.filter(function (x) { return x.code === code; })[0]; return m ? m.name : (code ? '—' : ''); }
+ function memberName(code) { if (String(code).toUpperCase() === 'ADMIN') return '***'; var m = state.members.filter(function (x) { return x.code === code; })[0]; return m ? m.name : (code ? '—' : ''); }
  // Mã rút gọn để hiển thị (bỏ hậu tố người-nhận/CHUA ở cuối): "20260520-001-TT01" -> "20260520-001". Giữ phần định danh duy nhất (prefix-seq).
  function shortTaskCode(code) { var p = String(code || '').split('-'); return p.length >= 3 ? p.slice(0, -1).join('-') : String(code || ''); }
 
  // =========================================================================
  // MOCK DB
  // =========================================================================
- var MOCK_KEY = 'pttt_mock_v7';
+ var MOCK_KEY = 'pttt_mock_v8';
+ // ADMIN (ẩn) — KHÔNG nằm trong db.members; user tổng hợp + PIN ở db._adminPin.
+ function mockAdminUser() { return { code: 'ADMIN', name: 'ADMIN', role: ROLE.ADMIN, title: 'Quản trị hệ thống', active: true, grants: [], avatar: '' }; }
  function mockSeed() {
    var members = [
-     { code: 'ADMIN', name: 'ADMIN', pin: '291219', role: ROLE.ADMIN, title: 'Quản trị hệ thống', active: true, createdAt: getLocalIso() },
      { code: 'TP01', name: 'Trưởng phòng', pin: '123456', role: ROLE.HEAD, title: 'Trưởng phòng Truyền thông', active: true, createdAt: getLocalIso() },
      { code: 'PP01', name: 'Lê Minh Phó', pin: '123456', role: ROLE.DEPUTY, title: 'Phó phòng Nội dung', active: true, createdAt: getLocalIso() },
      { code: 'TT01', name: 'Nguyễn An', pin: '123456', role: ROLE.STAFF, title: 'Chuyên viên Thiết kế', active: true, createdAt: getLocalIso() },
@@ -968,7 +977,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      T('CREW-002-PD02', 'Quay phóng sự hậu trường', 'Setup 3 máy', 'PD02', 'Khó', STATUS.RUNNING, 'PD01', '2026-06-28', 'Cao', null, true),
      T('CREW-003-PD03', 'Chụp bộ ảnh profile giảng viên', '20 thầy cô', 'PD03', 'Bình thường', STATUS.TODO, 'PD01', '2026-07-02', 'Bình thường', null, true)
    ];
-   return { departmentName: 'Trung Tâm Truyền Thông - Tổ Chức Sự Kiện', config: { 'Dễ': 1, 'Bình thường': 2, 'Nâng cao': 3, 'Khó': 4 }, members: members, tasks: tasks, projects: projects, sessions: {}, kpiTargets: kpiTargets };
+   return { departmentName: 'Trung Tâm Truyền Thông - Tổ Chức Sự Kiện', config: { 'Dễ': 1, 'Bình thường': 2, 'Nâng cao': 3, 'Khó': 4 }, members: members, tasks: tasks, projects: projects, sessions: {}, kpiTargets: kpiTargets, _adminPin: '291219' };
  }
  function mockDB() {
    var raw = localStorage.getItem(MOCK_KEY);
@@ -988,9 +997,15 @@ thead th{ background: rgba(255,255,255,0.34); }
    },
    login: function (code, pin) {
      var db = mockDB(); var cu = String(code).trim().toUpperCase();
-     var m = db.members.filter(function (x) { return x.code.toUpperCase() === cu && x.active; })[0];
-     if (!m) return Promise.reject(new Error('Tài khoản không tồn tại hoặc bị khóa.'));
-     if (m.pin !== String(pin)) return Promise.reject(new Error('Mã cá nhân (PIN) không đúng.'));
+     var m;
+     if (cu === 'ADMIN') {
+       if (String(pin) !== String(db._adminPin || '291219')) return Promise.reject(new Error('Mã cá nhân (PIN) không đúng.'));
+       m = mockAdminUser();
+     } else {
+       m = db.members.filter(function (x) { return x.code.toUpperCase() === cu && x.active; })[0];
+       if (!m) return Promise.reject(new Error('Tài khoản không tồn tại hoặc bị khóa.'));
+       if (m.pin !== String(pin)) return Promise.reject(new Error('Mã cá nhân (PIN) không đúng.'));
+     }
      var tk = 'mock-' + m.code + '-' + Date.now();
      db.sessions[tk] = m.code;
      db.activeToken = db.activeToken || {}; db.activeToken[m.code] = tk; // 1 tài khoản = 1 phiên: đăng nhập mới đá phiên cũ
@@ -1000,6 +1015,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    _user: function (db, tk) {
      var code = db.sessions[tk]; if (!code) return null;
      db.seen = db.seen || {}; db.seen[code] = Date.now();
+     if (code === 'ADMIN') return mockAdminUser(); // ADMIN: user tổng hợp, không trong members
      return db.members.filter(function (m) { return m.code === code && m.active; })[0] || null;
    },
    getState: function (tk) {
@@ -1026,12 +1042,15 @@ thead th{ background: rgba(255,255,255,0.34); }
      var allow = {}; allow[u.code]=true;
      if (dScope==='all') db.members.forEach(function(m){ if(!isCrewRole(m.role)) allow[m.code]=true; });
      else if (dScope==='allButHigher') db.members.forEach(function(m){ if(!isCrewRole(m.role) && rankOf(m.role)>=urank) allow[m.code]=true; });
-     else if (dScope==='own') { var ref={}; projects.forEach(function(p){ ref[p.leadCode]=1; (p.memberCodes||[]).forEach(function(c){ref[c]=1;}); }); deptTasks.forEach(function(t){ assigneesOf(t).forEach(function(c){ref[c]=1;}); }); db.members.forEach(function(m){ if(ref[m.code] && !isCrewRole(m.role) && rankOf(m.role)>=urank) allow[m.code]=true; }); }
+     else if (dScope==='own') { db.members.forEach(function(m){ if(!isCrewRole(m.role) && rankOf(m.role)>=urank) allow[m.code]=true; }); }
      if (crewAll) db.members.forEach(function(m){ if(isCrewRole(m.role)) allow[m.code]=true; });
      var members = db.members.filter(function(m){ return allow[m.code]; }).map(pubMem);
      var kpi = {}; Object.keys(db.kpiTargets || {}).forEach(function (c) { if (allow[c]) kpi[c] = db.kpiTargets[c]; });
+     // FIX "—": gắn tên người tạo vào từng task (không đụng members -> giữ cách ly cấp bậc).
+     var _nameAll = {}; db.members.forEach(function (m) { _nameAll[m.code] = m.name; });
+     var tasksOut = JSON.parse(JSON.stringify(tasks)); tasksOut.forEach(function (t) { t.createdByName = (String(t.createdBy).toUpperCase()==='ADMIN') ? '***' : (_nameAll[t.createdBy] || t.createdBy || ''); });
      return Promise.resolve({
-       user: pubMem(u), tasks: JSON.parse(JSON.stringify(tasks)), projects: JSON.parse(JSON.stringify(projects||[])),
+       user: pubMem(u), tasks: tasksOut, projects: JSON.parse(JSON.stringify(projects||[])),
        members: members,
        config: { departmentName: db.departmentName, difficulties: diffList(db.config), statuses: STATUS_ORDER }, kpiTargets: kpi
      });
@@ -1058,7 +1077,8 @@ thead th{ background: rgba(255,255,255,0.34); }
      } else if (!isManager(u)) {
        if (deptScopeOf(u.role) !== 'own') return Promise.reject(new Error('Không có quyền tạo việc.'));
        selfCreate = true;
-       if (unassigned || !selfOnly) return Promise.reject(new Error('Chuyên viên chỉ được tự giao việc cho chính mình.'));
+       // Chuyên viên giao cho chuyên viên KHÁC OK; chỉ chặn tạo việc "Chưa giao". (Guard outranksWithinSilo chặn giao lên cấp cao.)
+       if (unassigned) return Promise.reject(new Error('Chuyên viên phải chọn người thực hiện.'));
      }
      var asgArr = [];
      if (!unassigned) {
@@ -1223,6 +1243,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    changePassword: function (tk, oldPin, newPin) {
      var db = mockDB(); var u = this._user(db, tk);
      if (!u) return Promise.reject(new Error('SESSION_EXPIRED'));
+     if (u.code === 'ADMIN') { if (String(db._adminPin||'291219') !== String(oldPin)) return Promise.reject(new Error('Mã cá nhân hiện tại không đúng.')); db._adminPin = String(newPin); mockSave(db); return Promise.resolve({ ok: true }); }
      var m = db.members.filter(function (x) { return x.code === u.code; })[0];
      if (m.pin !== String(oldPin)) return Promise.reject(new Error('Mã cá nhân hiện tại không đúng.'));
      m.pin = String(newPin); mockSave(db); return Promise.resolve({ ok: true });
@@ -1383,13 +1404,13 @@ thead th{ background: rgba(255,255,255,0.34); }
      var db = mockDB(); var u = this._user(db, tk); if (!u) return Promise.reject(new Error('SESSION_EXPIRED'));
      db.chats = db.chats || []; db.messages = db.messages || []; this._ensureGroups(db, u); mockSave(db);
      var nameOf = {}; db.members.forEach(function (m) { nameOf[m.code] = m.name; });
-     var lastBy = {}; db.messages.forEach(function (m) { var p = lastBy[m.chatId]; if (!p || m.id > p.id) lastBy[m.chatId] = m; });
+     var lastBy = {}, countBy = {}; db.messages.forEach(function (m) { var p = lastBy[m.chatId]; if (!p || m.id > p.id) lastBy[m.chatId] = m; countBy[m.chatId] = (countBy[m.chatId]||0)+1; });
      var mine = db.chats.filter(function (c) { return c.memberCodes.indexOf(u.code) >= 0; });
      var list = mine.map(function (c) {
        var other = c.type === 'dm' ? (c.memberCodes.filter(function (x) { return x !== u.code; })[0] || '') : '';
        var last = lastBy[c.id] || null;
        return { id: c.id, type: c.type, name: c.type === 'dm' ? (nameOf[other] || other) : c.name, rawName: c.name, memberCodes: c.memberCodes, createdBy: c.createdBy, isSystem: c.createdBy === 'SYSTEM', otherCode: other,
-         last: last ? { senderCode: last.senderCode, kind: last.kind, body: last.kind === 'sticker' ? '[Sticker]' : last.body, createdAt: last.createdAt } : null, lastAt: last ? last.createdAt : c.createdAt };
+         last: last ? { senderCode: last.senderCode, senderName: (nameOf[last.senderCode]||last.senderCode), kind: last.kind, body: last.kind === 'sticker' ? '[Sticker]' : last.body, createdAt: last.createdAt } : null, lastAt: last ? last.createdAt : c.createdAt, lastId: last ? last.id : 0, count: (countBy[c.id]||0) };
      }).sort(function (a, b) { return String(b.lastAt||'').localeCompare(String(a.lastAt||'')); });
      // Online: bản thân + ai có "seen" gần đây. DEMO local: giả lập 1 phần online để thấy đốm xanh/xám (GAS thật dùng last-seen).
      var now = Date.now(); db.seen = db.seen || {};
@@ -1517,11 +1538,17 @@ thead th{ background: rgba(255,255,255,0.34); }
  var SESS_KEY = 'pttt_session_v3';
  var state = { boot: null, token: null, user: null, tasks: [], projects: [], members: [], config: null, kpiTargets: {}, page: 'dashboard', selectedProjectId: null, crewTab: 'dashboard', workTab: 'daily', crewWorkTab: 'daily', workPeriod: { daily: { type: 'month', anchor: todayStr() }, projects: { type: 'month', anchor: todayStr() }, crewdaily: { type: 'month', anchor: todayStr() }, crewprojects: { type: 'month', anchor: todayStr() } }, period: { type: 'month', anchor: todayStr() }, scope: 'me', filters: { status: '', difficulty: '', assignee: '', q: '' } };
 
- function toast(msg, kind, ms) {
+ function toast(msg, kind, ms, onClick) {
    var wrap = el('toasts'); if (!wrap) { wrap = document.createElement('div'); wrap.id = 'toasts'; wrap.className = 'toasts'; document.body.appendChild(wrap); }
    var t = document.createElement('div'); t.className = 'toast toast--' + (kind || 'info'); t.textContent = msg; wrap.appendChild(t);
+   var dismiss = function () { t.classList.remove('show'); setTimeout(function () { t.remove(); }, 300); };
+   if (typeof onClick === 'function') {
+     t.style.cursor = 'pointer';
+     t.addEventListener('click', function () { try { onClick(); } catch (e) {} dismiss(); });
+     t.insertAdjacentHTML('beforeend', '<span style="opacity:.7;margin-left:6px;font-size:12px">↗</span>');
+   }
    requestAnimationFrame(function () { t.classList.add('show'); });
-   setTimeout(function () { t.classList.remove('show'); setTimeout(function () { t.remove(); }, 300); }, ms || 3600);
+   setTimeout(dismiss, ms || 3600);
  }
  function handleErr(e) {
    var msg = (e && e.message) ? e.message : String(e);
@@ -1531,7 +1558,8 @@ thead th{ background: rgba(255,255,255,0.34); }
  }
  var _rememberSession = true; // ghi nhớ đăng nhập (localStorage) hay chỉ trong phiên tab (sessionStorage)
  function clearSession() {
-   stopPolling(); stopChatPoll(); state.chat = null;
+   stopPolling(); stopChatPoll(); stopMsgPoll(); state.chat = null;
+   state._msgArmed = false; state._msgNotify = {};
    state.token = null; state.user = null;
    state.filters = { status: '', difficulty: '', assignee: '', q: '' };
    state.scope = 'me';
@@ -1589,18 +1617,20 @@ thead th{ background: rgba(255,255,255,0.34); }
    if (state._giftSeen[t.taskCode]) return;
    state._giftSeen[t.taskCode] = true;
    var dl = t.deadline ? fmtDateVN(t.deadline) : 'Chưa đặt hạn';
-   var gift = 'Bạn có quà tặng từ ' + memberName(t.createdBy);
+   var gift = 'Bạn có quà tặng từ ' + creatorName(t);
    var detail = (t.title || '') + ' · Hạn: ' + dl;
    // Thông báo hệ điều hành (nếu được cấp quyền & không bị iframe chặn). Trong iframe GAS thường BỊ CHẶN,
    // nên kênh ĐÁNG TIN CẬY là toast trong-ứng-dụng + âm thanh (luôn hiện, ở lâu 9s).
    try {
      if ('Notification' in window && Notification.permission === 'granted') {
        var n = new Notification('🎁 ' + gift, { body: detail, tag: t.taskCode });
+       n.onclick = function () { try { window.focus(); } catch (e) {} openTaskDetail(t.taskCode); try { n.close(); } catch (e2) {} };
        setTimeout(function () { try { n.close(); } catch (e) {} }, 9000);
      }
    } catch (e) {}
    playDing();
-   toast('🎁 ' + gift + (t.title ? ' — “' + t.title + '”' : ''), 'ok', 9000);
+   // Bấm vào thông báo -> điều hướng tới task (mở chi tiết). (Bỏ chữ gợi ý "Bấm để mở" — toast vẫn click được.)
+   toast('🎁 ' + gift + (t.title ? ' — “' + t.title + '”' : ''), 'ok', 9000, function () { openTaskDetail(t.taskCode); });
  }
  // So khớp việc mới được giao cho MÌNH (do người khác giao) giữa 2 lần refresh.
  function maybeNotifyNewAssignments(prev, curr) {
@@ -1626,6 +1656,58 @@ thead th{ background: rgba(255,255,255,0.34); }
    }, 30000);
  }
  function stopPolling() { if (state._pollTimer) { clearInterval(state._pollTimer); state._pollTimer = null; } }
+
+ // ====== TIN NHẮN: đếm chưa đọc (client-side) + badge + thông báo + poll nền ======
+ function chatSeenKey() { return 'pttt_chat_seen_' + (state.user ? state.user.code : '_'); }
+ function readChatSeen() { try { return JSON.parse(localStorage.getItem(chatSeenKey())) || {}; } catch (e) { return {}; } }
+ function writeChatSeen(o) { try { localStorage.setItem(chatSeenKey(), JSON.stringify(o)); } catch (e) {} }
+ function chatUnreadFor(ch) { var s = readChatSeen(); return Math.max(0, (ch.count || 0) - (s[ch.id] || 0)); }
+ function chatUnreadTotal() { var c = state.chat; if (!c || !c.chats) return 0; return c.chats.reduce(function (a, ch) { return a + chatUnreadFor(ch); }, 0); }
+ function markChatRead(ch) { if (!ch) return; var s = readChatSeen(); s[ch.id] = ch.count || 0; writeChatSeen(s); updateMsgBadge(); }
+ function updateMsgBadge() {
+   var b = el('nav-msg-badge'); if (!b) return;
+   var n = chatUnreadTotal();
+   if (n > 0) { b.textContent = n > 99 ? '99+' : String(n); b.style.display = 'inline-flex'; } else b.style.display = 'none';
+ }
+ function goToChat(id) {
+   state.selectedMember = null; state.calSelectedDay = null; state.page = 'chat';
+   chatState().pendingOpen = id;
+   if (el('sidebar')) el('sidebar').classList.remove('is-open'); if (el('scrim')) el('scrim').classList.remove('is-open');
+   renderPage();
+ }
+ // Thông báo TIN NHẮN MỚI (từ người khác): toast (bấm để mở) + âm thanh + Notification OS. Idempotent + gác backlog.
+ function notifyNewMessages() {
+   var c = state.chat; if (!c || !c.chats) return;
+   state._msgNotify = state._msgNotify || {};
+   if (!state._msgArmed) { c.chats.forEach(function (ch) { state._msgNotify[ch.id] = ch.lastId || 0; }); state._msgArmed = true; return; }
+   c.chats.forEach(function (ch) {
+     var lid = ch.lastId || 0, seen = state._msgNotify[ch.id] || 0;
+     if (lid <= seen) return;
+     state._msgNotify[ch.id] = lid;
+     if (!ch.last || !ch.last.senderCode || ch.last.senderCode === c.me) return;     // mình gửi -> bỏ
+     if (state.page === 'chat' && c.activeId === ch.id) return;                       // đang mở đúng hội thoại -> bỏ
+     var who = (ch.last.senderName || memberName(ch.last.senderCode));
+     var preview = ch.last.kind === 'sticker' ? '[Sticker]' : (ch.last.body || '');
+     if (preview.length > 60) preview = preview.slice(0, 60) + '…';
+     var label = '💬 ' + who + (ch.type !== 'dm' ? ' (' + ch.name + ')' : '') + ': ' + preview;
+     playDing();
+     try { if ('Notification' in window && Notification.permission === 'granted') { var nn = new Notification(label, { tag: 'msg-' + ch.id }); nn.onclick = function () { try { window.focus(); } catch (e) {} goToChat(ch.id); try { nn.close(); } catch (e2) {} }; setTimeout(function () { try { nn.close(); } catch (e) {} }, 8000); } } catch (e) {}
+     toast(label, 'info', 8000, function () { goToChat(ch.id); });
+   });
+ }
+ // Poll nền (10s) — luôn chạy khi đăng nhập: cập nhật badge + thông báo tin nhắn dù KHÔNG ở mục Tin nhắn.
+ function startMsgPoll() {
+   stopMsgPoll();
+   state._msgTimer = setInterval(function () {
+     if (!state.token) { stopMsgPoll(); return; }
+     Server.listChats(state.token).then(function (r) {
+       var c = chatState(); c.chats = r.chats || []; c.roster = r.roster || c.roster; c.online = r.online || c.online; c.me = r.me || c.me;
+       notifyNewMessages(); updateMsgBadge();
+       if (state.page === 'chat') renderChatList();
+     }).catch(function () {});
+   }, 8000); // poll nền tin nhắn nhanh hơn (8s) -> badge + thông báo kịp thời kể cả khi không mở Tin nhắn
+ }
+ function stopMsgPoll() { if (state._msgTimer) { clearInterval(state._msgTimer); state._msgTimer = null; } }
 
  function renderRoot() {
    if (!state.token || !state.user) return renderLogin();
@@ -1659,9 +1741,11 @@ thead th{ background: rgba(255,255,255,0.34); }
        state.token = r.token; state.user = r.user; state._notifyArmed = false; saveSession(remember); return refreshState();
      }).then(function () {
        state.scope = isManager(state.user) ? 'overview' : 'me'; state.page = hasDeptBoard(state.user.role) ? 'dashboard' : 'crew';
-       startPolling();
+       state._msgArmed = false; state._msgNotify = {};
+       startPolling(); startMsgPoll();
        renderRoot(); toast('Chào mừng ' + state.user.name + '!', 'ok');
        openSummaryModal(); // hiện popup Tổng hợp 1 lần khi đăng nhập
+       chatLoad(function () { notifyNewMessages(); updateMsgBadge(); }); // nạp badge tin nhắn + arm baseline thông báo
      }).catch(function (e) { btn.disabled = false; btn.textContent = 'Truy cập hệ thống'; handleErr(e); });
    });
    var rs = el('mock-reset'); if (rs) rs.addEventListener('click', function (e) { e.preventDefault(); mockReset(); toast('Đã reset mẫu.', 'ok'); bootThenRender(); });
@@ -1713,8 +1797,9 @@ thead th{ background: rgba(255,255,255,0.34); }
    var collapsed = !!state.sidebarCollapsed;
    var nav = navGroups().map(function (g) {
      var links = g.items.map(function (it) {
+       var badge = (it.page === 'chat') ? '<span class="nav-badge" id="nav-msg-badge" style="display:none"></span>' : '';
        return '<div class="nav-link' + (navLinkActive(it) ? ' is-active' : '') + '" data-action="nav" data-page="' + it.page + '"' + (it.tab ? ' data-tab="' + it.tab + '"' : '') + ' title="' + esc(it.label) + '">' +
-         '<div class="ni">' + icon3d(it.icon, 20) + '</div><span class="nav-label">' + esc(it.label) + '</span></div>';
+         '<div class="ni">' + icon3d(it.icon, 20) + badge + '</div><span class="nav-label">' + esc(it.label) + '</span></div>';
      }).join('');
      return '<div class="nav-group nav-zone-' + g.key + '"><div class="nav-group-title"><span class="ngt-ico">' + icon3d(g.icon, 17) + '</span> <span class="ngt-text">' + esc(g.title) + '</span></div>' + links + '</div>';
    }).join('');
@@ -2059,7 +2144,7 @@ thead th{ background: rgba(255,255,255,0.34); }
        return '<div class="sum-row' + (isUnclaimed(t) ? ' sum-row--unclaimed' : '') + '">' +
          '<span class="tr-code mono" title="' + esc(t.taskCode) + '">' + esc(shortTaskCode(t.taskCode)) + '</span>' +
          '<div class="sum-main"><div class="sum-title">' + esc(t.title) + '</div>' +
-         '<div class="sum-sub faint">' + ic('user') + ' ' + esc(assigneeNames(t)) + ' · ' + ic('pen') + ' ' + esc(memberName(t.createdBy)) + (t.deadline ? ' · ' + ic('clock') + ' ' + esc(fmtDateVN(t.deadline)) : '') + '</div></div>' +
+         '<div class="sum-sub faint">' + ic('user') + ' ' + esc(assigneeNames(t)) + ' · ' + ic('pen') + ' ' + esc(creatorName(t)) + (t.deadline ? ' · ' + ic('clock') + ' ' + esc(fmtDateVN(t.deadline)) : '') + '</div></div>' +
          '<span class="pill ' + (STATUS_CLASS[t.status]||'') + '"><span class="dot"></span>' + esc(t.status) + '</span></div>';
      }).join('') : '<div class="empty text-sm" style="padding:12px">Không có.</div>';
      return '<div style="margin-top:16px"><div class="row row--between" style="margin-bottom:6px"><b>' + bk.icon + ' ' + esc(bk.label) + '</b><span class="faint text-sm">' + arr.length + ' việc</span></div><div class="sum-list">' + rows + '</div></div>';
@@ -2528,7 +2613,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      (t.description ? '<div class="text-sm muted" style="margin-top:-6px">' + esc(t.description) + '</div>' : '') +
      '<div class="task-meta"><span class="diff ' + (DIFF_CLASS[t.difficulty]||'') + '">' + esc(t.difficulty) + '</span>' +
      '<span class="tag">' + ic('user') + ' ' + (unclaimed ? 'Chưa giao' : esc(assigneeNames(t)) + (assigneeCount(t) > 1 ? ' (' + assigneeCount(t) + ' người)' : '')) + '</span>' +
-     '<span class="tag" style="background:rgba(0,0,0,0.03)">' + ic('pen') + ' Người tạo: ' + esc(memberName(t.createdBy)) + '</span>' + sdTag + dlTag + catTag + phatSinhTag +
+     '<span class="tag" style="background:rgba(0,0,0,0.03)">' + ic('pen') + ' Người tạo: ' + esc(creatorName(t)) + '</span>' + sdTag + dlTag + catTag + phatSinhTag +
      '<span class="pri ' + (PRIORITY_CLASS[t.priority]||'') + '">' + esc(t.priority) + '</span></div>' +
      noteHtml + linksHtml + stepsHtml +
      '<div class="task-actions">' + taskActions(t) + '</div></div>';
@@ -3048,8 +3133,8 @@ thead th{ background: rgba(255,255,255,0.34); }
      var prj = state.projects.find(p => p.id === projId);
      if (prj && prj.memberCodes) staff = staff.filter(m => prj.memberCodes.includes(m.code) || m.code === prj.leadCode);
    }
-   // Khoá người nhận = chính mình khi không phải quản lý (chuyên viên Phòng tự giao / thành viên crew tự giao).
-   var lockSelf = (crew || pickProj) ? (!canManageCrew(state.user) && isCrewRole(state.user.role)) : (!isManager(state.user) && deptScopeOf(state.user.role) === 'own');
+   // Khoá người nhận = chính mình CHỈ với thành viên crew tự giao. Chuyên viên Phòng giờ được giao cho chuyên viên KHÁC (peers) -> KHÔNG khoá.
+   var lockSelf = (crew || pickProj) ? (!canManageCrew(state.user) && isCrewRole(state.user.role)) : false;
    if (lockSelf) {
      staff = state.members.filter(function(m){ return m.code === state.user.code; });
    }
@@ -3216,7 +3301,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      row('Mã việc', '<span class="mono">'+esc(t.taskCode)+'</span>') +
      row('Tên công việc', esc(t.title)) +
      row('Trạng thái', statusPill) +
-     row('Người giao (tạo)', esc(memberName(t.createdBy))) +
+     row('Người giao (tạo)', esc(creatorName(t))) +
      row('Người thực hiện', isUnclaimed(t) ? '<span style="color:var(--c-primary-active);font-weight:700">Chưa đăng ký</span>' : esc(assigneeNames(t)) + (assigneeCount(t) > 1 ? ' <span class="faint">(' + assigneeCount(t) + ' người)</span>' : '')) +
      row('Hạn hoàn thành', t.deadline ? esc(fmtDateVN(t.deadline)) : '—') +
      row('Độ ưu tiên', esc(t.priority)) +
@@ -3366,7 +3451,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      var taskRows = (state.tasks||[]).map(function (t) {
        return {
          'Mã việc': t.taskCode, 'Tiêu đề': t.title, 'Mô tả': t.description || '',
-         'Người nhận': assigneeNames(t), 'Người giao': memberName(t.createdBy),
+         'Người nhận': assigneeNames(t), 'Người giao': creatorName(t),
          'Loại': t.crewTask ? 'Production Crew' : (t.projectId ? 'Dự án' : 'Daily'),
          'Dự án': projName(t.projectId), 'Phần phụ': t.category || '', 'Độ khó': t.difficulty,
          'Ưu tiên': t.priority, 'Trạng thái': t.status,
@@ -3520,8 +3605,9 @@ thead th{ background: rgba(255,255,255,0.34); }
    openModal(html);
    $('#qsched-form').addEventListener('submit', function (ev) {
      ev.preventDefault(); var d = el('qsched-date').value; if (!d) return;
-     var b = el('qsched-go'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
-     Server.setTaskDeadline(state.token, code, d).then(refreshState).then(function () { closeModal(); toast('📅 Đã đặt hạn ' + fmtDateVN(d), 'ok'); renderPage(); }).catch(function (e) { b.disabled = false; b.textContent = 'Đặt lịch'; handleErr(e); });
+     // OPTIMISTIC: đóng modal + cập nhật chip NGAY, ghi sheet chạy ngầm (lỗi -> hoàn lại).
+     var prev = t.deadline; t.deadline = d; closeModal(); renderPage();
+     Server.setTaskDeadline(state.token, code, d).then(function (srv) { if (srv && srv.deadline) { t.deadline = srv.deadline; } toast('📅 Đã đặt hạn ' + fmtDateVN(d), 'ok'); }).catch(function (e) { t.deadline = prev; renderPage(); handleErr(e); });
    });
  }
  // Document-level HTML5 drag-and-drop cho lịch (đăng ký 1 lần).
@@ -3567,13 +3653,13 @@ thead th{ background: rgba(255,255,255,0.34); }
      if (state.page !== 'chat' || !state.token) { stopChatPoll(); return; }
      c.tick = (c.tick || 0) + 1;
      // ~mỗi 24s làm mới danh sách + trạng thái online (đốm xanh/xám) mà không phá thread.
-     if (c.tick % 4 === 0) chatLoad(function () { renderChatList(); var a = chatActiveChat(); if (a) refreshThreadHeaderDot(a); });
+     if (c.tick % 4 === 0) chatLoad(function () { var a = chatActiveChat(); if (a) markChatRead(a); notifyNewMessages(); updateMsgBadge(); renderChatList(); if (a) refreshThreadHeaderDot(a); });
      if (!c.activeId) return;
      Server.getMessages(state.token, c.activeId, c.lastId).then(function (r) {
-       var added = (r.messages || []).filter(function (m) { return m.id > c.lastId; });
-       if (added.length) { c.msgs = c.msgs.concat(added); c.lastId = c.msgs[c.msgs.length - 1].id; renderChatMsgs(true); chatLoad(renderChatList); }
+       var added = (r.messages || []).filter(function (m) { return m.id > c.lastId && !c.msgs.some(function (x) { return x.id === m.id; }); }); // dedup (tránh trùng với tin gửi optimistic)
+       if (added.length) { c.msgs = c.msgs.concat(added); c.lastId = c.msgs[c.msgs.length - 1].id; renderChatMsgs(true); chatLoad(function () { var a = chatActiveChat(); if (a) markChatRead(a); renderChatList(); updateMsgBadge(); }); }
      }).catch(function () {});
-   }, 3000); // tin nhắn poll nhanh (3s) khi đang mở mục Tin nhắn — nhanh hơn nhịp chung 30s
+   }, 2000); // poll NHANH (2s) khi đang mở hội thoại -> nhận tin gần như tức thì
  }
  function renderChat() {
    setTitle('💬 Tin nhắn', 'Nhắn tin 1-1 (bảo mật) · nhóm phòng · nhóm tự tạo');
@@ -3583,7 +3669,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      '<div class="chat-list" id="chat-list"><div class="empty text-sm" style="padding:20px">Đang tải…</div></div></div>' +
      '<div class="chat-thread" id="chat-thread"><div class="chat-empty">Chọn một hội thoại để bắt đầu nhắn tin 💬</div></div></div>');
    // Mở sẵn hội thoại GẦN NHẤT để khung bên phải hiện ngay lịch sử tin nhắn (không để trống).
-   chatLoad(function () { renderChatList(); var openId = c.activeId || (c.chats[0] && c.chats[0].id); if (openId) openChat(openId, true); });
+   chatLoad(function () { renderChatList(); updateMsgBadge(); var openId = c.pendingOpen || c.activeId || (c.chats[0] && c.chats[0].id); c.pendingOpen = null; if (openId) openChat(openId, true); });
  }
  function chatLoad(cb) {
    Server.listChats(state.token).then(function (r) { var c = chatState(); c.chats = r.chats || []; c.roster = r.roster || []; c.online = r.online || {}; c.me = r.me || c.me; c.loaded = true; if (cb) cb(); }).catch(handleErr);
@@ -3598,13 +3684,16 @@ thead th{ background: rgba(255,255,255,0.34); }
    if (!c.chats.length) { box.innerHTML = '<div class="empty text-sm" style="padding:20px">Chưa có hội thoại. Bấm "+ Nhắn riêng" hoặc "+ Tạo nhóm".</div>'; return; }
    box.innerHTML = c.chats.map(function (ch) {
      var last = ch.last ? ((ch.last.senderCode === c.me ? 'Bạn: ' : '') + (ch.last.body || '')) : 'Chưa có tin nhắn';
-     return '<div class="chat-li' + (ch.id === c.activeId ? ' is-active' : '') + '" data-action="chat-open" data-id="' + esc(ch.id) + '">' + chatAvatar(ch) +
-       '<div class="cl-body"><div class="cl-name">' + esc(ch.name) + (ch.type === 'group' ? ' <span class="faint text-xs">· ' + ch.memberCodes.length + '</span>' : '') + '</div><div class="cl-last">' + esc(last) + '</div></div></div>';
+     var un = chatUnreadFor(ch);
+     return '<div class="chat-li' + (ch.id === c.activeId ? ' is-active' : '') + (un > 0 ? ' has-unread' : '') + '" data-action="chat-open" data-id="' + esc(ch.id) + '">' + chatAvatar(ch) +
+       '<div class="cl-body"><div class="cl-name">' + esc(ch.name) + (ch.type === 'group' ? ' <span class="faint text-xs">· ' + ch.memberCodes.length + '</span>' : '') + '</div><div class="cl-last">' + esc(last) + '</div></div>' +
+       (un > 0 ? '<span class="cl-unread">' + (un > 99 ? '99+' : un) + '</span>' : '') + '</div>';
    }).join('');
  }
  function openChat(id, keepView) {
    var c = chatState(); c.activeId = id; c.msgs = []; c.lastId = 0; c.stickerOpen = false; if (!keepView) c.mobileThread = true;
    var ch = c.chats.filter(function (x) { return x.id === id; })[0];
+   markChatRead(ch); // mở hội thoại -> đánh dấu đã đọc (xoá badge)
    renderChatList();
    var wrap = el('chat-wrap'); if (wrap && c.mobileThread) wrap.classList.add('show-thread');
    Server.getMessages(state.token, id, 0).then(function (r) {
@@ -3639,15 +3728,29 @@ thead th{ background: rgba(255,255,255,0.34); }
    box.innerHTML = c.msgs.length ? c.msgs.map(msgHtml).join('') : '<div class="chat-empty">Chưa có tin nhắn. Hãy gửi lời chào 👋</div>';
    if (scroll) box.scrollTop = box.scrollHeight;
  }
+ // Gửi tin OPTIMISTIC: hiện bong bóng NGAY (id tạm âm), server trả về thì thay bằng tin thật; lỗi thì gỡ + báo.
+ function chatSendOptimistic(kind, body) {
+   var c = chatState(); if (!c.activeId) return;
+   var temp = { id: -(new Date().getTime()), chatId: c.activeId, senderCode: c.me, senderName: (state.user && state.user.name) || c.me, kind: kind, body: body, createdAt: getLocalIso(), _pending: true };
+   c.msgs.push(temp); renderChatMsgs(true);
+   Server.sendMessage(state.token, c.activeId, kind, body).then(function (m) {
+     var i = c.msgs.indexOf(temp); if (i >= 0) c.msgs.splice(i, 1);
+     if (!c.msgs.some(function (x) { return x.id === m.id; })) c.msgs.push(m);   // poll có thể đã thêm -> tránh trùng
+     c.msgs.sort(function (a, b) { return (a.id || 0) - (b.id || 0); });
+     c.lastId = Math.max(c.lastId, m.id); renderChatMsgs(true);
+     chatLoad(function () { var a = chatActiveChat(); if (a) markChatRead(a); renderChatList(); updateMsgBadge(); });
+   }).catch(function (e) {
+     var i = c.msgs.indexOf(temp); if (i >= 0) { c.msgs.splice(i, 1); renderChatMsgs(false); } handleErr(e);
+   });
+ }
  function chatSend() {
    var c = chatState(); var inp = el('chat-input'); if (!inp) return; var txt = inp.value.trim(); if (!txt || !c.activeId) return;
-   inp.value = '';
-   Server.sendMessage(state.token, c.activeId, 'text', txt).then(function (m) { c.msgs.push(m); c.lastId = m.id; renderChatMsgs(true); chatLoad(renderChatList); }).catch(handleErr);
-   inp.focus();
+   inp.value = ''; inp.focus();
+   chatSendOptimistic('text', txt);
  }
  function chatSendSticker(url) {
    var c = chatState(); if (!c.activeId) return; c.stickerOpen = false; var pop = el('sticker-pop'); if (pop) pop.innerHTML = '';
-   Server.sendMessage(state.token, c.activeId, 'sticker', url).then(function (m) { c.msgs.push(m); c.lastId = m.id; renderChatMsgs(true); chatLoad(renderChatList); }).catch(handleErr);
+   chatSendOptimistic('sticker', url);
  }
  var STICKER_CATS = [['joy', '😄 Vui'], ['anger', '😠 Giận'], ['sadness', '😢 Buồn'], ['fear', '😱 Sợ'], ['disgust', '🤢 Chán']];
  function renderStickerPop() {
@@ -3732,7 +3835,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      var s = JSON.parse(rawL || rawS || 'null');
      if (s && s.token) { state.token = s.token; state.user = s.user; }
    } catch(e){}
-   if (state.token) { state._notifyArmed = false; Promise.all([Server.bootstrap().then(function(b){state.boot=b;}).catch(function(){}), refreshState()]).then(function(){ state.scope=isManager(state.user)?'overview':'me'; startPolling(); renderRoot(); openSummaryModal(); }).catch(function(e){ var msg=(e&&e.message)?e.message:String(e); clearSession(); bootThenRender(); if(/SESSION_KICKED/.test(msg)) setTimeout(function(){ toast('Tài khoản đang được sử dụng ở nơi khác.', 'err'); }, 400); }); }
+   if (state.token) { state._notifyArmed = false; state._msgArmed = false; state._msgNotify = {}; Promise.all([Server.bootstrap().then(function(b){state.boot=b;}).catch(function(){}), refreshState()]).then(function(){ state.scope=isManager(state.user)?'overview':'me'; startPolling(); startMsgPoll(); renderRoot(); openSummaryModal(); chatLoad(function(){ notifyNewMessages(); updateMsgBadge(); }); }).catch(function(e){ var msg=(e&&e.message)?e.message:String(e); clearSession(); bootThenRender(); if(/SESSION_KICKED/.test(msg)) setTimeout(function(){ toast('Tài khoản đang được sử dụng ở nơi khác.', 'err'); }, 400); }); }
    else { bootThenRender(); }
    // Quay lại tab (foreground) -> làm mới 1 lần để dữ liệu kịp thời mà KHÔNG phải tải mỗi lần bấm.
    document.addEventListener('visibilitychange', function () {

@@ -278,12 +278,24 @@ function publicMember_(m) {
 // ---------------------------------------------------------------------------
 // Phiên đăng nhập (tự quản lý — KHÔNG dựa Google session)
 // ---------------------------------------------------------------------------
+// ADMIN (quyền cao nhất) KHÔNG nằm trong sheet Members. Credentials lưu ở Script Property ADMIN_PINHASH (ẩn khỏi mọi nơi lưu trữ dữ liệu).
+var ADMIN_CODE = 'ADMIN';
+function adminUser_() { return { code: ADMIN_CODE, name: 'ADMIN', pinHash: '', role: ROLE.ADMIN, title: 'Quản trị hệ thống', active: true, grants: [], avatar: '' }; }
+function adminPinHash_() { try { return PropertiesService.getScriptProperties().getProperty('ADMIN_PINHASH') || hashPin_('291219'); } catch (e) { return hashPin_('291219'); } }
+function isAdminCode_(code) { return String(code || '').trim().toUpperCase() === ADMIN_CODE; }
+
 function login(memberCode, pin) {
-  var members = readMembers_();
   var code = String(memberCode).trim().toUpperCase();
-  var m = members.filter(function (x) { return x.code.toUpperCase() === code && x.active; })[0];
-  if (!m) throw err_('Tài khoản không tồn tại hoặc đã bị khóa.');
-  if (m.pinHash !== hashPin_(pin)) throw err_('Mã cá nhân (PIN) không đúng.');
+  var m;
+  if (isAdminCode_(code)) {
+    if (adminPinHash_() !== hashPin_(pin)) throw err_('Mã cá nhân (PIN) không đúng.');
+    m = adminUser_();
+  } else {
+    var members = readMembers_();
+    m = members.filter(function (x) { return x.code.toUpperCase() === code && x.active; })[0];
+    if (!m) throw err_('Tài khoản không tồn tại hoặc đã bị khóa.');
+    if (m.pinHash !== hashPin_(pin)) throw err_('Mã cá nhân (PIN) không đúng.');
+  }
 
   var token = uuid_();
   var cache = CacheService.getScriptCache();
@@ -311,6 +323,7 @@ function getUser_(token) {
   } catch (e) { if (e && /SESSION_KICKED/.test(e.message)) throw e; /* property lỗi -> bỏ qua check */ }
   cache.put('S_' + token, code, SESSION_TTL); // gia hạn
   touchPresence_(code); // cập nhật "online" mỗi lần gọi API (kể cả poll)
+  if (isAdminCode_(code)) return publicMember_(adminUser_()); // ADMIN: dựng user tổng hợp, KHÔNG đọc sheet
   var m = readMembers_().filter(function (x) { return x.code === code && x.active; })[0];
   return m ? publicMember_(m) : null;
 }
@@ -525,7 +538,8 @@ function readKpiTargets_() {
 // v17: định dạng lại MỌI sheet cho gọn gàng (header, kẻ sọc, bề rộng cột, clip) qua formatSheets_().
 // v18: thêm cột task startDate (ngày bắt đầu dự kiến) + needSupport/supportNote (yêu cầu hỗ trợ).
 // v19: tạo tài khoản ADMIN (vai trò ROLE.ADMIN, quyền cao nhất).
-var MIG_VERSION = '19';
+// v20: ẨN ADMIN — chuyển credentials sang Script Property, XOÁ ADMIN khỏi sheet Members (không lưu pass/info ADMIN ở data storage).
+var MIG_VERSION = '20';
 function ensureMigrated_() {
   try {
     var props = PropertiesService.getScriptProperties();
@@ -599,7 +613,8 @@ function getState(token) {
     var ref = {};
     projects.forEach(function (p) { ref[p.leadCode] = 1; (p.memberCodes || []).forEach(function (c) { ref[c] = 1; }); });
     deptTasks.forEach(function (t) { taskAssignees_(t).forEach(function (c) { ref[c] = 1; }); });
-    allMembers.forEach(function (m) { if (ref[m.code] && !isCrewRole_(m.role) && rankOf_(m.role) >= urank) allow[m.code] = true; });
+    // Chuyên viên thấy TẤT CẢ chuyên viên cùng/​thấp cấp (peers) để GIAO việc cho nhau; vẫn KHÔNG thấy cấp cao hơn.
+    allMembers.forEach(function (m) { if (!isCrewRole_(m.role) && rankOf_(m.role) >= urank) allow[m.code] = true; });
   }
   if (crewAll) allMembers.forEach(function (m) { if (isCrewRole_(m.role)) allow[m.code] = true; });
   var members = allMembers.filter(function (m) { return allow[m.code]; }).map(publicMember_);
@@ -608,6 +623,11 @@ function getState(token) {
   var allowed = {}; members.forEach(function (m) { allowed[m.code] = true; });
   var allKpi = readKpiTargets_(); var kpiTargets = {};
   Object.keys(allKpi).forEach(function (c) { if (allowed[c]) kpiTargets[c] = allKpi[c]; });
+
+  // FIX "—": gắn TÊN người tạo vào TỪNG task để hiển thị/thông báo (kể cả khi người tạo bị ẩn khỏi danh sách theo cấp bậc).
+  // KHÔNG đụng danh sách members -> giữ nguyên cách ly cấp bậc/silo.
+  var _nameAll = {}; allMembers.forEach(function (m) { _nameAll[m.code] = m.name; });
+  tasks.forEach(function (t) { t.createdByName = isAdminCode_(t.createdBy) ? '***' : (_nameAll[t.createdBy] || t.createdBy || ''); });
 
   return {
     user: u,
@@ -658,7 +678,8 @@ function createTask(token, payload) {
   } else if (!isManager_(u)) {
     if (deptScopeOf_(u.role) !== 'own') throw err_('Chỉ Trưởng phòng / Phó phòng mới có quyền thực hiện thao tác này.');
     selfCreate = true;
-    if (unassigned || !_selfOnly()) throw err_('Chuyên viên chỉ được tự giao việc cho chính mình.');
+    // Chuyên viên được GIAO cho chuyên viên KHÁC (peers); KHÔNG được tạo việc "Chưa giao". Guard outranksWithinSilo_ vẫn chặn giao LÊN cấp cao.
+    if (unassigned) throw err_('Chuyên viên phải chọn người thực hiện (không tạo việc "Chưa giao").');
   }
   // -> Tới đây: nếu unassigned thì người tạo CHẮC CHẮN là quản lý (Trưởng/Phó phòng, hoặc quản lý crew với task crew).
 
@@ -1456,6 +1477,12 @@ function setKpiTarget(token, targets) {
 function changePassword(token, oldPin, newPin) {
   var u = requireUser_(token);
   if (String(newPin || '').trim().length < 4) throw err_('Mã PIN mới tối thiểu 4 ký tự.');
+  // ADMIN: PIN lưu ở Script Property (không trong sheet) -> cập nhật tại đó.
+  if (isAdminCode_(u.code)) {
+    if (adminPinHash_() !== hashPin_(oldPin)) throw err_('Mã cá nhân hiện tại không đúng.');
+    try { PropertiesService.getScriptProperties().setProperty('ADMIN_PINHASH', hashPin_(String(newPin).trim())); } catch (e) { throw err_('Không lưu được PIN ADMIN.'); }
+    return { ok: true };
+  }
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -1524,8 +1551,8 @@ function listChats(token) {
   ensureDefaultGroups_(u);
   var chats = readChats_().filter(function (c) { return isChatMember_(c, u.code); });
   var msgs = readMessages_();
-  var lastBy = {};
-  msgs.forEach(function (m) { var p = lastBy[m.chatId]; if (!p || m.id > p.id) lastBy[m.chatId] = m; });
+  var lastBy = {}, countBy = {};
+  msgs.forEach(function (m) { var p = lastBy[m.chatId]; if (!p || m.id > p.id) lastBy[m.chatId] = m; countBy[m.chatId] = (countBy[m.chatId] || 0) + 1; });
   var allMembers = readMembers_();
   var nameOf = {}; allMembers.forEach(function (m) { nameOf[m.code] = m.name; });
   var list = chats.map(function (c) {
@@ -1533,8 +1560,8 @@ function listChats(token) {
     var disp = (c.type === 'dm') ? (nameOf[other] || other || 'Người dùng') : c.name;
     var last = lastBy[c.id] || null;
     return { id: c.id, type: c.type, name: disp, rawName: c.name, memberCodes: c.memberCodes, createdBy: c.createdBy, isSystem: c.createdBy === 'SYSTEM', otherCode: other,
-      last: last ? { senderCode: last.senderCode, kind: last.kind, body: last.kind === 'sticker' ? '[Sticker]' : last.body, createdAt: last.createdAt } : null,
-      lastAt: last ? last.createdAt : c.createdAt };
+      last: last ? { senderCode: last.senderCode, senderName: (nameOf[last.senderCode] || last.senderCode), kind: last.kind, body: last.kind === 'sticker' ? '[Sticker]' : last.body, createdAt: last.createdAt } : null,
+      lastAt: last ? last.createdAt : c.createdAt, lastId: last ? last.id : 0, count: (countBy[c.id] || 0) };
   }).sort(function (a, b) { return String(b.lastAt || '').localeCompare(String(a.lastAt || '')); });
   // Roster để bắt đầu hội thoại mới (chỉ tên/vai trò — KHÔNG nhạy cảm).
   var roster = allMembers.filter(function (m) { return m.active && m.code !== u.code; }).map(function (m) { return { code: m.code, name: m.name, role: m.role, avatar: m.avatar || '' }; });

@@ -89,21 +89,26 @@ function migrate_() {
   ensureSheet_(ss, SH_CHATS, CHAT_COLS);
   ensureSheet_(ss, SH_MESSAGES, MSG_COLS);
   migrateRolesAndConfig_();
-  ensureAdmin_();   // tạo tài khoản ADMIN (quyền cao nhất) nếu chưa có
+  ensureAdminConfig_();   // ADMIN: credentials ở Script Property (ẨN), XOÁ khỏi sheet Members
   formatSheets_(); // mỗi lần migrate -> định dạng lại sheet cho gọn gàng
 }
 
-// Tạo tài khoản ADMIN (quyền CAO NHẤT) — idempotent: chỉ thêm nếu chưa tồn tại. Mã ADMIN / PIN 291219 (băm SHA-256).
-function ensureAdmin_() {
-  var ss = getSS_();
-  var sh = ss.getSheetByName(SH_MEMBERS);
-  if (!sh) return;
-  var vals = sh.getDataRange().getValues();
-  for (var i = 1; i < vals.length; i++) {
-    if (String(vals[i][0]).trim().toUpperCase() === 'ADMIN') return; // đã có -> không đụng (giữ PIN người dùng tự đổi)
+// ADMIN (quyền CAO NHẤT) KHÔNG được lưu trong sheet (data storage). Credentials -> Script Property ADMIN_PINHASH.
+// Idempotent: dời PIN hiện tại (nếu ADMIN từng nằm trong sheet) sang Property rồi XOÁ dòng; nếu chưa có -> đặt mặc định 291219.
+function ensureAdminConfig_() {
+  var sp = PropertiesService.getScriptProperties();
+  var ss = getSS_(); var sh = ss.getSheetByName(SH_MEMBERS);
+  if (sh && sh.getLastRow() > 1) {
+    var vals = sh.getDataRange().getValues();
+    for (var i = vals.length - 1; i >= 1; i--) {            // duyệt ngược để xoá dòng an toàn
+      if (String(vals[i][0]).trim().toUpperCase() === 'ADMIN') {
+        if (!sp.getProperty('ADMIN_PINHASH')) sp.setProperty('ADMIN_PINHASH', String(vals[i][2] || '')); // giữ PIN ADMIN hiện tại (nếu đã đổi)
+        sh.deleteRow(i + 1);                                  // XOÁ ADMIN khỏi sheet -> pass/info ADMIN không nằm ở nơi lưu trữ
+        Logger.log('Đã chuyển ADMIN ra khỏi sheet Members (credentials lưu ở Script Property).');
+      }
+    }
   }
-  sh.appendRow(['ADMIN', 'ADMIN', hashPin_('291219'), ROLE.ADMIN, 'Quản trị hệ thống', true, nowIso_(), '[]', '']);
-  Logger.log('Đã tạo tài khoản ADMIN (quyền cao nhất), PIN mặc định 291219 — nên đổi PIN sau khi đăng nhập.');
+  if (!sp.getProperty('ADMIN_PINHASH')) sp.setProperty('ADMIN_PINHASH', hashPin_('291219'));
 }
 
 // Bề rộng cột gợi ý theo TÊN cột (px). Cột không liệt kê -> 110. Cột "dài/xấu" (avatar base64, pinHash, mô tả, link) -> hẹp + clip.
