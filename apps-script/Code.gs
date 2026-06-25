@@ -349,6 +349,10 @@ function requireUser_(token) {
 function isAdmin_(u) { return u && u.role === ROLE.ADMIN; }
 function isManager_(u) { return u.role === ROLE.ADMIN || u.role === ROLE.HEAD || u.role === ROLE.DEPUTY; }
 function isHead_(u) { return u.role === ROLE.ADMIN || u.role === ROLE.HEAD; }
+// Dự án: ai quản lý được? Quản lý Phòng (toàn bộ dự án) HOẶC Lead của CHÍNH dự án đó (gồm chuyên viên tự tạo + làm lead).
+function projectById_(id) { if (!id) return null; var a = readProjects_().filter(function (p) { return p.id === id; }); return a[0] || null; }
+function isProjectLead_(u, projectId) { var p = projectById_(projectId); return !!(u && p && String(p.leadCode || '').trim().toUpperCase() === String(u.code).trim().toUpperCase()); }
+function canManageProject_(u, p) { return isManager_(u) || !!(u && p && String(p.leadCode || '').trim().toUpperCase() === String(u.code).trim().toUpperCase()); }
 function isCrewRole_(role) { return CREW_ROLES.indexOf(role) >= 0; }
 function hasGrant_(u, key) { return !!(u && u.grants && u.grants.indexOf(key) >= 0); }
 // Quản lý Production Crew = Trưởng/Phó phòng + Lead/Sub-Lead crew + người được GIAO quyền MANAGE_CREW. ("Thành viên" KHÔNG quản lý.)
@@ -371,7 +375,7 @@ function requireCrewManager_(token) {
   return u;
 }
 // Ai được SỬA/XOÁ một task: task crew -> quản lý crew; còn lại -> Trưởng/Phó phòng.
-function canManageTask_(u, t) { return t.crewTask ? canManageCrew_(u) : isManager_(u); }
+function canManageTask_(u, t) { return t.crewTask ? canManageCrew_(u) : (isManager_(u) || (t.projectId && isProjectLead_(u, t.projectId))); }
 // Danh sách NGƯỜI THỰC HIỆN của 1 task (hỗ trợ nhiều người). Tương thích ngược: chưa có assigneeCodes -> suy ra từ assigneeCode.
 function taskAssignees_(t) {
   if (t && t.assigneeCodes && t.assigneeCodes.length) return t.assigneeCodes;
@@ -634,6 +638,9 @@ function getState(token) {
     tasks: tasks,
     projects: projects,
     members: members,
+    // Toàn bộ nhân sự Phòng (mọi cấp) — CHỈ để chọn Lead / thành viên khi tạo-sửa dự án ("bất kỳ ai trong phòng").
+    // Không thay đổi danh sách `members` (giữ nguyên cách ly cấp bậc cho phần giao việc).
+    deptPool: allMembers.filter(function (m) { return m.active && !isCrewRole_(m.role); }).map(publicMember_),
     config: {
       departmentName: getConfigValue_('DepartmentName', 'Trung Tâm Truyền Thông - Tổ Chức Sự Kiện'),
       difficulties: difficultyList_(),
@@ -810,8 +817,8 @@ function transitionTask(token, taskCode, action, reportLink) {
 
     // ÉP đổi trạng thái (Leader/Sub-Lead/Trưởng/Phó phòng) — bỏ qua máy trạng thái tuần tự.
     if (action === 'force') {
-      var canForce = t.crewTask ? canManageCrew_(u) : isManager_(u);
-      if (!canForce) throw err_('Chỉ quản lý mới được ép đổi trạng thái.');
+      var canForce = t.crewTask ? canManageCrew_(u) : (isManager_(u) || (t.projectId && isProjectLead_(u, t.projectId)));
+      if (!canForce) throw err_('Chỉ quản lý hoặc Lead dự án mới được ép đổi trạng thái.');
       if (!t.assigneeCode) throw err_('Việc chưa có người nhận — không thể đổi trạng thái.');
       var ns = String(reportLink || '').trim(); // tham số thứ 4 mang TRẠNG THÁI MỚI
       if (STATUS_ORDER.indexOf(ns) < 0) throw err_('Trạng thái không hợp lệ.');
@@ -1040,12 +1047,18 @@ function deleteTask(token, taskCode) {
 // API: Dự án
 // ---------------------------------------------------------------------------
 function createProject(token, payload) {
-  var u = requireManager_(token);
+  // Trưởng/Phó phòng VÀ chuyên viên đều được tạo dự án (người có mặt ở bảng Phòng).
+  var u = requireUser_(token);
+  if (!hasDeptBoard_(u.role)) throw err_('Bạn không có quyền tạo dự án.');
   payload = payload || {};
   var name = String(payload.name || '').trim();
   if (!name) throw err_('Vui lòng nhập tên dự án.');
   var leadCode = String(payload.leadCode || '').trim();
   if (!leadCode) throw err_('Vui lòng chọn Lead dự án.');
+  // Lead = bất kỳ nhân sự nào của Phòng đang hoạt động.
+  var leadM = readMembers_().filter(function (m) { return String(m.code).toUpperCase() === leadCode.toUpperCase() && m.active; })[0];
+  if (!leadM || !hasDeptBoard_(leadM.role)) throw err_('Lead dự án phải là nhân sự của Phòng.');
+  leadCode = leadM.code;
 
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -1072,7 +1085,7 @@ function createProject(token, payload) {
 }
 
 function updateProject(token, payload) {
-  var u = requireManager_(token);
+  var u = requireUser_(token);
   payload = payload || {};
   var id = String(payload.id || '').trim();
   if (!id) throw err_('Thiếu mã dự án.');
@@ -1088,8 +1101,12 @@ function updateProject(token, payload) {
     }
     if (rowIdx < 0) throw err_('Không tìm thấy dự án.');
     var p = projObjFromRow_(values[rowIdx]);
+    if (!canManageProject_(u, p)) throw err_('Bạn chỉ được sửa dự án do mình làm Lead.');
     p.name = String(payload.name || p.name).trim();
     p.leadCode = String(payload.leadCode || p.leadCode).trim();
+    var _lm = readMembers_().filter(function (m) { return String(m.code).toUpperCase() === p.leadCode.toUpperCase() && m.active; })[0];
+    if (!_lm || !hasDeptBoard_(_lm.role)) throw err_('Lead dự án phải là nhân sự của Phòng.');
+    p.leadCode = _lm.code;
     p.memberCodes = Array.isArray(payload.memberCodes) ? payload.memberCodes : p.memberCodes;
     p.eventDate = normalizeDate_(payload.eventDate);
     var newRow = projToRow_(p);
@@ -1101,7 +1118,7 @@ function updateProject(token, payload) {
 }
 
 function completeProject(token, id) {
-  var u = requireManager_(token);
+  var u = requireUser_(token);
   id = String(id || '').trim();
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -1114,6 +1131,7 @@ function completeProject(token, id) {
     }
     if (rowIdx < 0) throw err_('Không tìm thấy dự án.');
     var p = projObjFromRow_(values[rowIdx]);
+    if (!canManageProject_(u, p)) throw err_('Bạn chỉ được hoàn tất dự án do mình làm Lead.');
     p.status = PROJ_STATUS.COMPLETED;
     var newRow = projToRow_(p);
     sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
@@ -1123,9 +1141,9 @@ function completeProject(token, id) {
   }
 }
 
-/** Xoá dự án + XOÁ LUÔN mọi task thuộc dự án đó (cascade). Chỉ Trưởng/Phó phòng. */
+/** Xoá dự án + XOÁ LUÔN mọi task thuộc dự án đó (cascade). Quản lý Phòng HOẶC Lead của dự án. */
 function deleteProject(token, id) {
-  var u = requireManager_(token);
+  var u = requireUser_(token);
   id = String(id || '').trim();
   if (!id) throw err_('Thiếu mã dự án.');
   var lock = LockService.getScriptLock();
@@ -1136,6 +1154,7 @@ function deleteProject(token, id) {
     var prowIdx = -1;
     for (var i = 1; i < pv.length; i++) { if (String(pv[i][0]).trim() === id) { prowIdx = i; break; } }
     if (prowIdx < 0) throw err_('Không tìm thấy dự án.');
+    if (!canManageProject_(u, projObjFromRow_(pv[prowIdx]))) throw err_('Bạn chỉ được xoá dự án do mình làm Lead.');
     psh.deleteRow(prowIdx + 1);
 
     // cascade: xoá các task có projectId === id (xoá từ dưới lên để không lệch chỉ số)

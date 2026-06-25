@@ -666,8 +666,7 @@ thead th{ background: rgba(255,255,255,0.34); }
 .brand .logo{ background: rgba(255,255,255,0.4) !important; box-shadow: inset 0 1px 2px rgba(255,255,255,0.9), 0 10px 22px rgba(30,60,110,0.20) !important; padding:6px; }
 .brand .logo .i3d{ filter: drop-shadow(0 2px 4px rgba(30,60,110,0.3)); }
 .glyph .i3d{ filter: drop-shadow(0 2px 4px rgba(30,60,110,0.25)); }
-</style>
-</head>
+</style></head>
 <body>
   <div class="bg-orb"></div>
   <div class="loading-screen"><span class="spin"></span> Đang tải hệ thống...</div>
@@ -801,6 +800,10 @@ thead th{ background: rgba(255,255,255,0.34); }
  function isAdmin(u) { return u && u.role === ROLE.ADMIN; }
  function isManager(u) { return u && (u.role === ROLE.ADMIN || u.role === ROLE.HEAD || u.role === ROLE.DEPUTY); }
  function isHead(u) { return u && (u.role === ROLE.ADMIN || u.role === ROLE.HEAD); }
+  // Dự án: Lead (gồm chuyên viên tự tạo) toàn quyền quản lý dự án CỦA MÌNH; quản lý Phòng quản lý mọi dự án.
+  function projById(id){ return (state.projects||[]).filter(function(x){return x.id===id;})[0]; }
+  function isProjectLead(projId){ var p=projById(projId); return !!(p && state.user && String(p.leadCode||'').trim().toUpperCase()===String(state.user.code).trim().toUpperCase()); }
+  function canManageProject(p){ return isManager(state.user) || !!(p && state.user && String(p.leadCode||'').trim().toUpperCase()===String(state.user.code).trim().toUpperCase()); }
  function isCrewRole(role) { return CREW_ROLES.indexOf(role) >= 0; }
  function hasGrant(u, key) { return !!(u && u.grants && u.grants.indexOf(key) >= 0); }
  function canManageCrew(u) { return u && (CREW_MGR_ROLES.indexOf(u.role) >= 0 || hasGrant(u, 'MANAGE_CREW')); }
@@ -810,7 +813,7 @@ thead th{ background: rgba(255,255,255,0.34); }
  function deptScopeOf(role) { if (role===ROLE.ADMIN) return 'all'; if (role===ROLE.HEAD) return 'all'; if (role===ROLE.DEPUTY) return 'allButHigher'; if (role===ROLE.STAFF) return 'own'; return 'none'; }
  function hasDeptBoard(role) { return deptScopeOf(role) !== 'none'; }
  // Ai được SỬA/XOÁ một task: task crew -> quản lý crew; task thường/dự án -> Trưởng/Phó phòng.
- function canManageTask(t) { return t && t.crewTask ? canManageCrew(state.user) : isManager(state.user); }
+ function canManageTask(t) { return t && t.crewTask ? canManageCrew(state.user) : (isManager(state.user) || (t && t.projectId && isProjectLead(t.projectId))); }
  // Chính chủ được SỬA task daily (không thuộc dự án) của mình.
  function isOwnEditable(t) { var u = state.user; return t && isAssignee(t, u.code) && !t.projectId && (deptScopeOf(u.role) === 'own' || isCrewRole(u.role)); }
  function canEditTask(t) { return canManageTask(t) || isOwnEditable(t); }
@@ -1051,6 +1054,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      return Promise.resolve({
        user: pubMem(u), tasks: tasksOut, projects: JSON.parse(JSON.stringify(projects||[])),
        members: members,
+       deptPool: db.members.filter(function(m){ return m.active && !isCrewRole(m.role); }).map(pubMem),
        config: { departmentName: db.departmentName, difficulties: diffList(db.config), statuses: STATUS_ORDER }, kpiTargets: kpi
      });
    },
@@ -1126,7 +1130,7 @@ thead th{ background: rgba(255,255,255,0.34); }
        t.assigneeCode = u.code; t.assigneeCodes = [u.code]; t.status = STATUS.TODO; mockSave(db); return Promise.resolve(t);
      }
      if (action === 'force') {
-       var canForce = t.crewTask ? canManageCrew(u) : isManager(u);
+       var canForce = t.crewTask ? canManageCrew(u) : (isManager(u) || (t.projectId && (db.projects||[]).some(function(pr){return pr.id===t.projectId && String(pr.leadCode||'').toUpperCase()===String(u.code).toUpperCase();})));
        if (!canForce) return Promise.reject(new Error('Chỉ quản lý mới được ép đổi trạng thái.'));
        if (!t.assigneeCode) return Promise.reject(new Error('Việc chưa có người nhận.'));
        var ns = String(link || '').trim();
@@ -1157,7 +1161,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      if (!u) return Promise.reject(new Error('SESSION_EXPIRED'));
      var t = db.tasks.filter(function (x) { return x.taskCode === code; })[0];
      if (!t) return Promise.reject(new Error('Không tìm thấy công việc.'));
-     var isMgrOfTask = t.crewTask ? canManageCrew(u) : isManager(u);
+     var isMgrOfTask = t.crewTask ? canManageCrew(u) : (isManager(u) || (t.projectId && (db.projects||[]).some(function(pr){return pr.id===t.projectId && String(pr.leadCode||'').toUpperCase()===String(u.code).toUpperCase();})));
      var ownEdit = isAssignee(t, u.code) && !t.projectId && (deptScopeOf(u.role) === 'own' || isCrewRole(u.role));
      if (!isMgrOfTask && !ownEdit) return Promise.reject(new Error('Bạn không có quyền sửa công việc này.'));
      // NHIỀU người thực hiện: p.assigneeCodes (mảng) hoặc assigneeCode (1 người).
@@ -1202,7 +1206,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      if (!u) return Promise.reject(new Error('SESSION_EXPIRED'));
      var t = db.tasks.filter(function (x) { return x.taskCode === code; })[0];
      if (!t) return Promise.reject(new Error('Không tìm thấy công việc.'));
-     var canMgr = t.crewTask ? canManageCrew(u) : isManager(u);
+     var canMgr = t.crewTask ? canManageCrew(u) : (isManager(u) || (t.projectId && (db.projects||[]).some(function(pr){return pr.id===t.projectId && String(pr.leadCode||'').toUpperCase()===String(u.code).toUpperCase();})));
      var ownDelete = isAssignee(t, u.code) && (deptScopeOf(u.role)==='own' || isCrewRole(u.role));
      if (!canMgr && !ownDelete) return Promise.reject(new Error('Bạn không có quyền xoá công việc này.'));
      db.tasks = db.tasks.filter(function (x) { return x.taskCode !== code; });
@@ -1210,7 +1214,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    },
    createProject: function (tk, p) {
      var db = mockDB(); var u = this._user(db, tk);
-     if (!u || !isManager(u)) return Promise.reject(new Error('Không có quyền.'));
+     if (!u || !hasDeptBoard(u.role)) return Promise.reject(new Error('Bạn không có quyền tạo dự án.'));
      db.projects = db.projects || [];
      var code = 'PRJ-' + new Date().getFullYear() + '-' + ('00' + (db.projects.length + 1)).slice(-3);
      var prj = { id: code, name: p.name, leadCode: p.leadCode, memberCodes: p.memberCodes || [], eventDate: p.eventDate, status: PROJ_STATUS.ACTIVE, createdAt: getLocalIso() };
@@ -1218,23 +1222,27 @@ thead th{ background: rgba(255,255,255,0.34); }
    },
    updateProject: function (tk, p) {
      var db = mockDB(); var u = this._user(db, tk);
-     if (!u || !isManager(u)) return Promise.reject(new Error('Không có quyền.'));
+     if (!u) return Promise.reject(new Error('SESSION_EXPIRED'));
      var prj = db.projects.filter(function(x){return x.id === p.id})[0];
      if (!prj) return Promise.reject(new Error('Không tìm thấy dự án.'));
+     if (!(isManager(u) || String(prj.leadCode||'').toUpperCase()===String(u.code).toUpperCase())) return Promise.reject(new Error('Bạn chỉ được sửa dự án do mình làm Lead.'));
      prj.name = p.name; prj.leadCode = p.leadCode; prj.memberCodes = p.memberCodes || []; prj.eventDate = p.eventDate;
      mockSave(db); return Promise.resolve(prj);
    },
    completeProject: function (tk, id) {
      var db = mockDB(); var u = this._user(db, tk);
-     if (!u || !isManager(u)) return Promise.reject(new Error('Không có quyền.'));
+     if (!u) return Promise.reject(new Error('SESSION_EXPIRED'));
      var prj = db.projects.filter(function(x){return x.id === id})[0];
+     if (prj && !(isManager(u) || String(prj.leadCode||'').toUpperCase()===String(u.code).toUpperCase())) return Promise.reject(new Error('Bạn chỉ được hoàn tất dự án do mình làm Lead.'));
      if (prj) { prj.status = PROJ_STATUS.COMPLETED; mockSave(db); return Promise.resolve(prj); }
      return Promise.reject(new Error('Không tìm thấy project.'));
    },
    deleteProject: function (tk, id) {
      var db = mockDB(); var u = this._user(db, tk);
-     if (!u || !isManager(u)) return Promise.reject(new Error('Không có quyền.'));
-     if (!db.projects.filter(function(x){return x.id === id;})[0]) return Promise.reject(new Error('Không tìm thấy dự án.'));
+     if (!u) return Promise.reject(new Error('SESSION_EXPIRED'));
+     var _pd = db.projects.filter(function(x){return x.id === id;})[0];
+     if (!_pd) return Promise.reject(new Error('Không tìm thấy dự án.'));
+     if (!(isManager(u) || String(_pd.leadCode||'').toUpperCase()===String(u.code).toUpperCase())) return Promise.reject(new Error('Bạn chỉ được xoá dự án do mình làm Lead.'));
      db.projects = db.projects.filter(function (x) { return x.id !== id; });
      db.tasks = db.tasks.filter(function (t) { return t.projectId !== id; }); // xoá luôn task của dự án
      mockSave(db); return Promise.resolve({ ok: true });
@@ -1381,7 +1389,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dl||''))) return Promise.reject(new Error('Ngày không hợp lệ.'));
      var t = db.tasks.filter(function (x) { return x.taskCode === code; })[0];
      if (!t) return Promise.reject(new Error('Không tìm thấy công việc.'));
-     var canMgr = t.crewTask ? canManageCrew(u) : isManager(u);
+     var canMgr = t.crewTask ? canManageCrew(u) : (isManager(u) || (t.projectId && (db.projects||[]).some(function(pr){return pr.id===t.projectId && String(pr.leadCode||'').toUpperCase()===String(u.code).toUpperCase();})));
      var ownEdit = isAssignee(t, u.code) && (deptScopeOf(u.role) === 'own' || isCrewRole(u.role));
      if (!canMgr && !ownEdit && !isAssignee(t, u.code)) return Promise.reject(new Error('Bạn không có quyền đổi hạn công việc này.'));
      if (t.projectId) { var prj = (db.projects||[]).filter(function(x){return x.id===t.projectId;})[0]; if (prj && prj.eventDate && dl > prj.eventDate) return Promise.reject(new Error('Hạn không được trễ hơn ngày sự kiện của dự án (' + prj.eventDate + ').')); }
@@ -1579,7 +1587,7 @@ thead th{ background: rgba(255,255,255,0.34); }
  function refreshState() {
    return Server.getState(state.token).then(function (s) {
      var prevTasks = state.tasks || [];
-     state.user = s.user; state.tasks = s.tasks || []; state.projects = s.projects || []; state.members = s.members || [];
+     state.user = s.user; state.tasks = s.tasks || []; state.projects = s.projects || []; state.members = s.members || []; state.deptPool = s.deptPool || s.members || [];
      state.config = s.config; state.kpiTargets = s.kpiTargets || {};
      maybeNotifyNewAssignments(prevTasks, state.tasks);
      return s;
@@ -2412,7 +2420,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    var mgr = isManager(state.user);
    var html = '<div class="row row--between" style="margin-bottom:24px">' +
      '<div class="faint text-sm">Có ' + state.projects.length + ' dự án</div>' +
-     (mgr ? '<button class="btn btn--primary" data-action="open-create-project">+ Tạo Dự án mới</button>' : '') + '</div>';
+     (hasDeptBoard(state.user.role) ? '<button class="btn btn--primary" data-action="open-create-project">+ Tạo Dự án mới</button>' : '') + '</div>';
    
    if (!state.projects.length) {
      html += '<div class="card empty"><div class="big">🚀</div><p>Chưa có dự án nào được tạo.</p></div>';
@@ -2423,7 +2431,7 @@ thead th{ background: rgba(255,255,255,0.34); }
        var pct = pTasks.length > 0 ? Math.round((doneTasks.length / pTasks.length) * 100) : 0;
        
        // Nút 3 chấm chỉnh sửa dự án (được làm nổi bật và chuẩn phong cách Liquid Glass)
-       var editBtn = mgr ? kebabMenu({ menuAction: 'project-menu', entries: [
+       var editBtn = canManageProject(p) ? kebabMenu({ menuAction: 'project-menu', entries: [
            { action: 'edit-project', id: p.id, code: '', label: '' + ic('edit') + ' Sửa dự án' },
            { action: 'delete-project', id: p.id, code: '', label: '' + ic('trash') + ' Xoá dự án', danger: true }
          ] }) : '';
@@ -2468,7 +2476,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    
    // Top Stats
    var headerBtns = '';
-   if (mgr && p.status !== PROJ_STATUS.COMPLETED) {
+   if (canManageProject(p) && p.status !== PROJ_STATUS.COMPLETED) {
      headerBtns = '<div class="row row--wrap"><button class="btn btn--ghost btn--sm" data-action="edit-project" data-id="'+esc(p.id)+'">' + ic('edit') + ' Sửa</button><button class="btn btn--success btn--sm" data-action="complete-project" data-id="'+esc(p.id)+'">Đánh dấu Hoàn thành</button><button class="btn btn--ghost btn--sm" data-action="delete-project" data-id="'+esc(p.id)+'" style="color:var(--c-danger)">' + ic('trash') + ' Xoá dự án</button></div>';
    }
 
@@ -2624,7 +2632,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    var pTasks = state.tasks.filter(function(t){return t.projectId === p.id;});
    var doneTasks = pTasks.filter(function(t){return t.status === STATUS.DONE;});
    var pct = pTasks.length > 0 ? Math.round((doneTasks.length / pTasks.length) * 100) : 0;
-   var editBtn = mgr ? kebabMenu({ menuAction: 'project-menu', entries: [
+   var editBtn = canManageProject(p) ? kebabMenu({ menuAction: 'project-menu', entries: [
        { action: 'edit-project', id: p.id, code: '', label: '' + ic('edit') + ' Sửa dự án' },
        { action: 'delete-project', id: p.id, code: '', label: '' + ic('trash') + ' Xoá dự án', danger: true }
      ] }) : '';
@@ -2723,7 +2731,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    }
    var projs = state.projects.filter(function (p) { return inWorkPeriod(p.createdAt, which); });
    var html = '<div class="row row--between" style="margin-bottom:18px"><div class="faint text-sm">Có ' + projs.length + ' dự án trong kỳ</div>' +
-     (mgr ? '<button class="btn btn--primary" data-action="open-create-project">+ Tạo Dự án mới</button>' : '') + '</div>';
+     (hasDeptBoard(state.user.role) ? '<button class="btn btn--primary" data-action="open-create-project">+ Tạo Dự án mới</button>' : '') + '</div>';
    if (!projs.length) return html + '<div class="card empty"><div class="big">🚀</div><p>Chưa có dự án nào trong kỳ này.</p></div>';
    return html + '<div class="grid-cards">' + projs.map(projectCard).join('') + '</div>';
  }
@@ -3080,7 +3088,7 @@ thead th{ background: rgba(255,255,255,0.34); }
 
  function openProjectForm(projId) {
    // Dự án là của Phòng -> chỉ chọn nhân sự Phòng (không gồm Production Crew).
-   var staff = state.members.filter(function(m){return m.active && hasDeptBoard(m.role);});
+   var staff = (state.deptPool || state.members).filter(function(m){return m.active && hasDeptBoard(m.role);});
    var p = projId ? state.projects.find(x => x.id === projId) : null;
    var title = p ? 'Chỉnh sửa Dự án' : 'Tạo Dự án Mới';
    var submitText = p ? 'Lưu thay đổi' : 'Khởi tạo Dự án';
@@ -3850,6 +3858,5 @@ thead th{ background: rgba(255,255,255,0.34); }
  });
  init();
 })();
- </script>
-</body>
+ </script></body>
 </html>
