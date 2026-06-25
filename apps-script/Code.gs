@@ -71,7 +71,7 @@ var TASK_COLS = ['taskCode', 'title', 'description', 'assigneeCode', 'difficulty
                  'kpiPoint', 'status', 'createdBy', 'createdAt', 'deadline',
                  'startedAt', 'submittedAt', 'completedAt', 'reportLink', 'note',
                  'priority', 'pauseHours', 'lastPausedAt', 'projectId', 'crewTask',
-                 'category', 'completeLink', 'phatSinh', 'batchName'];
+                 'category', 'completeLink', 'phatSinh', 'batchName', 'assigneeCodes'];
 // Phần phụ công việc (Trung Tâm Truyền thông).
 var WORK_CATEGORIES = ['Admin', 'Design', 'Digital marketing', 'Facebook', 'TikTok', 'Multimedia', 'PR', 'Internal communications'];
 var PROJECT_COLS = ['id', 'name', 'leadCode', 'memberCodes', 'eventDate', 'status', 'createdAt'];
@@ -355,8 +355,14 @@ function requireCrewManager_(token) {
 }
 // Ai được SỬA/XOÁ một task: task crew -> quản lý crew; còn lại -> Trưởng/Phó phòng.
 function canManageTask_(u, t) { return t.crewTask ? canManageCrew_(u) : isManager_(u); }
+// Danh sách NGƯỜI THỰC HIỆN của 1 task (hỗ trợ nhiều người). Tương thích ngược: chưa có assigneeCodes -> suy ra từ assigneeCode.
+function taskAssignees_(t) {
+  if (t && t.assigneeCodes && t.assigneeCodes.length) return t.assigneeCodes;
+  return (t && t.assigneeCode) ? [t.assigneeCode] : [];
+}
+function isTaskAssignee_(t, code) { return taskAssignees_(t).indexOf(code) >= 0; }
 // Chính chủ được SỬA task daily (không thuộc dự án) của mình: chuyên viên Phòng (own) hoặc thành viên crew.
-function isOwnEditable_(u, t) { return t.assigneeCode === u.code && !t.projectId && (deptScopeOf_(u.role) === 'own' || isCrewRole_(u.role)); }
+function isOwnEditable_(u, t) { return isTaskAssignee_(t, u.code) && !t.projectId && (deptScopeOf_(u.role) === 'own' || isCrewRole_(u.role)); }
 function canEditTask_(u, t) { return canManageTask_(u, t) || isOwnEditable_(u, t); }
 
 // Phân cấp hiển thị: số NHỎ = cấp CAO. Vai trò thấp KHÔNG xem được thông tin vai trò cao.
@@ -418,11 +424,23 @@ function taskObjFromRow_(row) {
       else o[c] = String(o[c]);
     });
   if (!o.projectId) o.projectId = null;
+  // NHIỀU người thực hiện: assigneeCodes lưu dạng JSON array trong 1 ô. Tương thích ngược:
+  // dòng cũ chưa có cột này -> suy ra [assigneeCode]. Không cần backfill dữ liệu.
+  var _ac = [];
+  if (o.assigneeCodes) {
+    try { _ac = JSON.parse(o.assigneeCodes); }
+    catch (e) { _ac = String(o.assigneeCodes).split(',').map(function (s) { return s.trim(); }); }
+  }
+  if (!(_ac instanceof Array)) _ac = [];
+  _ac = _ac.map(function (x) { return String(x).trim(); }).filter(Boolean);
+  if (!_ac.length && o.assigneeCode) _ac = [String(o.assigneeCode).trim()];
+  o.assigneeCodes = _ac;
   return o;
 }
 function taskToRow_(t) {
   return TASK_COLS.map(function (c) {
     var v = t[c];
+    if (c === 'assigneeCodes') return JSON.stringify((v instanceof Array) ? v : (v ? [v] : []));
     if (v === undefined || v === null) return '';
     return v;
   });
@@ -496,7 +514,8 @@ function readKpiTargets_() {
 // v13: thêm cột task category, completeLink, phatSinh.
 // v14: thêm cột task batchName (gom việc con cùng "đầu việc chung").
 // v15: thêm sheet Chats + Messages (mục Tin nhắn / chat).
-var MIG_VERSION = '15';
+// v16: thêm cột task assigneeCodes (nhiều người thực hiện trong 1 task; tương thích ngược -> [assigneeCode]).
+var MIG_VERSION = '16';
 function ensureMigrated_() {
   try {
     var props = PropertiesService.getScriptProperties();
@@ -548,11 +567,11 @@ function getState(token) {
   // Việc "Chưa đăng ký" (assigneeCode rỗng) hiển thị cho mọi người đủ điều kiện để có thể NHẬN.
   var deptTasks = [];
   if (dScope === 'all') deptTasks = allTasks.filter(function (t) { return !t.crewTask; });
-  else if (dScope === 'allButHigher') deptTasks = allTasks.filter(function (t) { return !t.crewTask && aRank(t) >= urank; });
-  else if (dScope === 'own') deptTasks = allTasks.filter(function (t) { return !t.crewTask && (t.assigneeCode === u.code || !t.assigneeCode); });
+  else if (dScope === 'allButHigher') deptTasks = allTasks.filter(function (t) { return !t.crewTask && (aRank(t) >= urank || isTaskAssignee_(t, u.code)); });
+  else if (dScope === 'own') deptTasks = allTasks.filter(function (t) { return !t.crewTask && (isTaskAssignee_(t, u.code) || !t.assigneeCode); });
   var crewTasksArr = [];
   if (crewAll) crewTasksArr = allTasks.filter(function (t) { return t.crewTask && (aIsCrew(t) || !t.assigneeCode); });
-  else if (crewOwn) crewTasksArr = allTasks.filter(function (t) { return t.crewTask && (t.assigneeCode === u.code || !t.assigneeCode); });
+  else if (crewOwn) crewTasksArr = allTasks.filter(function (t) { return t.crewTask && (isTaskAssignee_(t, u.code) || !t.assigneeCode); });
   var tasks = deptTasks.concat(crewTasksArr);
 
   // ----- PROJECTS — dự án dùng chung; crew cũng thấy để LIÊN KẾT task crew vào dự án Trung Tâm. -----
@@ -569,7 +588,7 @@ function getState(token) {
   else if (dScope === 'own') {
     var ref = {};
     projects.forEach(function (p) { ref[p.leadCode] = 1; (p.memberCodes || []).forEach(function (c) { ref[c] = 1; }); });
-    deptTasks.forEach(function (t) { if (t.assigneeCode) ref[t.assigneeCode] = 1; });
+    deptTasks.forEach(function (t) { taskAssignees_(t).forEach(function (c) { ref[c] = 1; }); });
     allMembers.forEach(function (m) { if (ref[m.code] && !isCrewRole_(m.role) && rankOf_(m.role) >= urank) allow[m.code] = true; });
   }
   if (crewAll) allMembers.forEach(function (m) { if (isCrewRole_(m.role)) allow[m.code] = true; });
@@ -606,39 +625,48 @@ function createTask(token, payload) {
   payload = payload || {};
   var crewTask = !!payload.crewTask;
   var u = requireUser_(token);
-  var rawAssignee = String(payload.assigneeCode || '').trim();
-  var unassigned = !rawAssignee; // tạo "việc chưa giao" (Chưa đăng ký) — CHỈ quản lý mới được; người khác tự nhận sau.
+  // NHIỀU người thực hiện trong 1 task: nhận payload.assigneeCodes (mảng) hoặc assigneeCode (1 người, tương thích cũ).
+  var rawCodes = [];
+  if (payload.assigneeCodes && payload.assigneeCodes.length) rawCodes = [].concat(payload.assigneeCodes);
+  else if (payload.assigneeCode) rawCodes = [payload.assigneeCode];
+  rawCodes = rawCodes.map(function (c) { return String(c || '').trim(); }).filter(Boolean);
+  var _seen = {}; rawCodes = rawCodes.filter(function (c) { if (_seen[c]) return false; _seen[c] = 1; return true; }); // loại trùng, giữ thứ tự
+  var unassigned = rawCodes.length === 0; // tạo "việc chưa giao" (Chưa đăng ký) — CHỈ quản lý mới được; người khác tự nhận sau.
   // Quyền tạo việc:
   //  - Task crew: cần quyền quản lý crew (Trưởng/Phó phòng + Lead/Sub-Lead + người được giao MANAGE_CREW).
   //  - Task daily/dự án: Trưởng/Phó phòng giao cho ai cũng được; CHUYÊN VIÊN được TỰ giao việc cho CHÍNH MÌNH.
   //    (Thành viên Production Crew KHÔNG có bảng Phòng nên không lọt vào nhánh này.)
   var selfCreate = false;
+  function _selfOnly() { return rawCodes.length === 1 && rawCodes[0] === u.code; }
   if (crewTask) {
     if (!canManageCrew_(u)) {
       // Thành viên crew (không phải quản lý) được TỰ giao việc crew cho chính mình.
       if (!isCrewRole_(u.role)) throw err_('Bạn không có quyền quản lý Production Crew.');
       selfCreate = true;
-      if (unassigned || rawAssignee !== u.code) throw err_('Bạn chỉ được tự giao việc cho chính mình.');
+      if (unassigned || !_selfOnly()) throw err_('Bạn chỉ được tự giao việc cho chính mình.');
     }
   } else if (!isManager_(u)) {
     if (deptScopeOf_(u.role) !== 'own') throw err_('Chỉ Trưởng phòng / Phó phòng mới có quyền thực hiện thao tác này.');
     selfCreate = true;
-    if (unassigned || rawAssignee !== u.code) throw err_('Chuyên viên chỉ được tự giao việc cho chính mình.');
+    if (unassigned || !_selfOnly()) throw err_('Chuyên viên chỉ được tự giao việc cho chính mình.');
   }
   // -> Tới đây: nếu unassigned thì người tạo CHẮC CHẮN là quản lý (Trưởng/Phó phòng, hoặc quản lý crew với task crew).
 
   var members = readMembers_();
-  var assignee = null;
+  var assignees = []; // mảng member object đã xác thực
   if (!unassigned) {
-    assignee = members.filter(function (m) {
-      return m.code === rawAssignee && m.active;
-    })[0];
-    if (!assignee) throw err_('Người được giao việc không hợp lệ.');
-    if (crewTask && !isCrewRole_(assignee.role)) throw err_('Chỉ giao task crew cho thành viên thuộc Production Crew.');
-    if (!crewTask && !hasDeptBoard_(assignee.role)) throw err_('Việc của Phòng chỉ giao cho nhân sự có mặt ở Phòng.');
-    // Quản lý crew toàn quyền (Trưởng/Phó phòng hoặc người ĐƯỢC CẤP QUYỀN) giao task crew cho BẤT KỲ thành viên crew, không vướng cấp bậc.
-    if (!(crewTask && isCrewAdmin_(u)) && outranksWithinSilo_(u.role, assignee.role)) throw err_('Không thể giao việc cho người có vai trò cao hơn.');
+    rawCodes.forEach(function (rc) {
+      var a = members.filter(function (m) { return m.code === rc && m.active; })[0];
+      if (!a) throw err_('Người được giao việc không hợp lệ: ' + rc);
+      if (crewTask && !isCrewRole_(a.role)) throw err_('Chỉ giao task crew cho thành viên thuộc Production Crew.');
+      if (!crewTask && !hasDeptBoard_(a.role)) throw err_('Việc của Phòng chỉ giao cho nhân sự có mặt ở Phòng.');
+      // Quản lý crew toàn quyền (Trưởng/Phó phòng hoặc người ĐƯỢC CẤP QUYỀN) giao task crew cho BẤT KỲ thành viên crew, không vướng cấp bậc.
+      if (!(crewTask && isCrewAdmin_(u)) && outranksWithinSilo_(u.role, a.role)) throw err_('Không thể giao việc cho người có vai trò cao hơn.');
+      assignees.push(a);
+    });
   }
+  var assigneeCodesArr = assignees.map(function (a) { return a.code; });
+  var primaryCode = assigneeCodesArr.length ? assigneeCodesArr[0] : '';
 
   var difficulty = String(payload.difficulty || '').trim();
   if (DIFFICULTY_ORDER.indexOf(difficulty) < 0) throw err_('Độ khó không hợp lệ.');
@@ -691,12 +719,12 @@ function createTask(token, payload) {
       }
     }
     var seq = maxSeq + 1;
-    var suffix = unassigned ? 'CHUA' : assignee.code; // việc chưa giao -> hậu tố CHUA
+    var suffix = unassigned ? 'CHUA' : primaryCode; // việc chưa giao -> hậu tố CHUA; nhiều người -> hậu tố = người đầu tiên
     var code = prefix + '-' + ('00' + seq).slice(-3) + '-' + suffix;
 
     var task = {
       taskCode: code, title: title, description: description,
-      assigneeCode: unassigned ? '' : assignee.code, difficulty: difficulty, kpiPoint: points,
+      assigneeCode: primaryCode, assigneeCodes: assigneeCodesArr, difficulty: difficulty, kpiPoint: points,
       status: unassigned ? STATUS.UNCLAIMED : STATUS.TODO, createdBy: u.code, createdAt: nowIso_(),
       deadline: deadline, startedAt: '', submittedAt: '', completedAt: '',
       reportLink: '', note: note, priority: priority,
@@ -739,7 +767,7 @@ function transitionTask(token, taskCode, action, reportLink) {
       if (t.status !== STATUS.UNCLAIMED || t.assigneeCode) throw err_('Công việc này đã có người nhận.');
       var canClaim = t.crewTask ? (isCrewRole_(u.role) || canManageCrew_(u)) : hasDeptBoard_(u.role);
       if (!canClaim) throw err_('Bạn không thể nhận công việc này.');
-      t.assigneeCode = u.code; t.status = STATUS.TODO;
+      t.assigneeCode = u.code; t.assigneeCodes = [u.code]; t.status = STATUS.TODO;
       var rowC = taskToRow_(t);
       sh.getRange(rowIdx + 1, 1, 1, rowC.length).setValues([rowC]);
       t.projectId = t.projectId || null;
@@ -763,8 +791,8 @@ function transitionTask(token, taskCode, action, reportLink) {
       return t;
     }
 
-    // CHỈ người được giao việc mới thao tác được; manager/khác KHÔNG có quyền.
-    if (t.assigneeCode !== u.code) throw err_('Chỉ người được giao việc mới có quyền thao tác trên công việc này.');
+    // CHỈ người được giao việc mới thao tác được (bất kỳ AI trong danh sách người thực hiện); manager/khác KHÔNG có quyền.
+    if (!isTaskAssignee_(t, u.code)) throw err_('Chỉ người được giao việc mới có quyền thao tác trên công việc này.');
 
     if (action === 'start') {
       if (t.status !== STATUS.TODO) throw err_('Chỉ bắt đầu được công việc "Chưa bắt đầu".');
@@ -815,7 +843,7 @@ function updateTaskNote(token, taskCode, note) {
     }
     if (rowIdx < 0) throw err_('Không tìm thấy công việc.');
     var t = taskObjFromRow_(values[rowIdx]);
-    if (t.assigneeCode !== u.code) throw err_('Chỉ người được giao việc mới có quyền sửa ghi chú công việc này.');
+    if (!isTaskAssignee_(t, u.code)) throw err_('Chỉ người được giao việc mới có quyền sửa ghi chú công việc này.');
     t.note = String(note || '');
     var newRow = taskToRow_(t);
     sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
@@ -839,7 +867,7 @@ function setTaskDeadline(token, taskCode, deadline) {
     for (var i = 1; i < values.length; i++) { if (String(values[i][0]) === String(taskCode)) { rowIdx = i; break; } }
     if (rowIdx < 0) throw err_('Không tìm thấy công việc.');
     var t = taskObjFromRow_(values[rowIdx]);
-    if (!canEditTask_(u, t) && t.assigneeCode !== u.code) throw err_('Bạn không có quyền đổi hạn công việc này.');
+    if (!canEditTask_(u, t) && !isTaskAssignee_(t, u.code)) throw err_('Bạn không có quyền đổi hạn công việc này.');
     if (t.projectId) {
       var prj = readProjects_().filter(function (p) { return p.id === t.projectId; })[0];
       if (prj && prj.eventDate && dl > prj.eventDate) throw err_('Hạn không được trễ hơn ngày sự kiện của dự án (' + prj.eventDate + ').');
@@ -867,15 +895,28 @@ function updateTask(token, taskCode, payload) {
     var t = taskObjFromRow_(values[rowIdx]);
     if (!canEditTask_(u, t)) throw err_('Bạn không có quyền sửa công việc này.');
     // Người sửa vì là CHÍNH CHỦ (không phải quản lý) thì không được giao lại cho người khác.
-    if (!canManageTask_(u, t) && String(payload.assigneeCode).trim() !== u.code) throw err_('Bạn chỉ được sửa việc của chính mình.');
+    // NHIỀU người thực hiện: payload.assigneeCodes (mảng) hoặc assigneeCode (1 người, tương thích cũ).
+    var upCodes = [];
+    if (payload.assigneeCodes && payload.assigneeCodes.length) upCodes = [].concat(payload.assigneeCodes);
+    else if (payload.assigneeCode !== undefined) upCodes = [payload.assigneeCode];
+    upCodes = upCodes.map(function (c) { return String(c || '').trim(); }).filter(Boolean);
+    var _su = {}; upCodes = upCodes.filter(function (c) { if (_su[c]) return false; _su[c] = 1; return true; });
+    if (!upCodes.length) throw err_('Người được giao việc không hợp lệ.');
+    // Người sửa vì là CHÍNH CHỦ (không phải quản lý) thì không được giao lại cho người khác (chỉ giữ chính mình).
+    if (!canManageTask_(u, t) && !(upCodes.length === 1 && upCodes[0] === u.code)) throw err_('Bạn chỉ được sửa việc của chính mình.');
 
     var title = String(payload.title || '').trim();
     if (!title) throw err_('Vui lòng nhập tên công việc.');
-    var assignee = readMembers_().filter(function (m) { return m.code === String(payload.assigneeCode).trim() && m.active; })[0];
-    if (!assignee) throw err_('Người được giao việc không hợp lệ.');
-    if (t.crewTask && !isCrewRole_(assignee.role)) throw err_('Chỉ giao task crew cho thành viên thuộc Production Crew.');
-    if (!t.crewTask && !hasDeptBoard_(assignee.role)) throw err_('Việc của Phòng chỉ giao cho nhân sự có mặt ở Phòng.');
-    if (!(t.crewTask && isCrewAdmin_(u)) && outranksWithinSilo_(u.role, assignee.role)) throw err_('Không thể giao việc cho người có vai trò cao hơn.');
+    var upMembers = readMembers_();
+    var upAssignees = [];
+    upCodes.forEach(function (rc) {
+      var a = upMembers.filter(function (m) { return m.code === rc && m.active; })[0];
+      if (!a) throw err_('Người được giao việc không hợp lệ: ' + rc);
+      if (t.crewTask && !isCrewRole_(a.role)) throw err_('Chỉ giao task crew cho thành viên thuộc Production Crew.');
+      if (!t.crewTask && !hasDeptBoard_(a.role)) throw err_('Việc của Phòng chỉ giao cho nhân sự có mặt ở Phòng.');
+      if (!(t.crewTask && isCrewAdmin_(u)) && outranksWithinSilo_(u.role, a.role)) throw err_('Không thể giao việc cho người có vai trò cao hơn.');
+      upAssignees.push(a);
+    });
     var difficulty = String(payload.difficulty || '').trim();
     if (DIFFICULTY_ORDER.indexOf(difficulty) < 0) throw err_('Độ khó không hợp lệ.');
     var points = 0; // KPI đã bỏ
@@ -884,7 +925,8 @@ function updateTask(token, taskCode, payload) {
 
     t.title = title;
     t.description = String(payload.description || '').trim();
-    t.assigneeCode = assignee.code;
+    t.assigneeCode = upAssignees[0].code;
+    t.assigneeCodes = upAssignees.map(function (a) { return a.code; });
     t.difficulty = difficulty;
     t.kpiPoint = points;
     t.priority = priority;
@@ -925,7 +967,7 @@ function deleteTask(token, taskCode) {
     if (rowIdx < 0) throw err_('Không tìm thấy công việc.');
     var t = taskObjFromRow_(values[rowIdx]);
     // Quản lý xoá được mọi việc trong phạm vi; CHUYÊN VIÊN/thành viên crew được xoá việc CỦA CHÍNH MÌNH.
-    var ownDelete = (t.assigneeCode === u.code) && (deptScopeOf_(u.role) === 'own' || isCrewRole_(u.role));
+    var ownDelete = isTaskAssignee_(t, u.code) && (deptScopeOf_(u.role) === 'own' || isCrewRole_(u.role));
     if (!canManageTask_(u, t) && !ownDelete) throw err_('Bạn không có quyền xoá công việc này.');
     sh.deleteRow(rowIdx + 1);
     return { ok: true };
@@ -1069,9 +1111,18 @@ function cascadeMemberCode_(oldCode, newCode) {
   oldCode = String(oldCode).trim().toUpperCase();
   newCode = String(newCode).trim();
   var tSheet = getSheet_(SH_TASKS), tv = tSheet.getDataRange().getValues();
+  var acIdx = TASK_COLS.indexOf('assigneeCodes');
   for (var i = 1; i < tv.length; i++) {
     if (String(tv[i][3]).trim().toUpperCase() === oldCode) tSheet.getRange(i + 1, 4).setValue(newCode);   // assigneeCode
     if (String(tv[i][7]).trim().toUpperCase() === oldCode) tSheet.getRange(i + 1, 8).setValue(newCode);   // createdBy
+    if (acIdx >= 0 && tv[i].length > acIdx && tv[i][acIdx]) {                                              // assigneeCodes (mảng nhiều người)
+      var arr2; try { arr2 = JSON.parse(tv[i][acIdx]); } catch (e) { arr2 = null; }
+      if (arr2 instanceof Array) {
+        var chg = false;
+        for (var z = 0; z < arr2.length; z++) { if (String(arr2[z]).trim().toUpperCase() === oldCode) { arr2[z] = newCode; chg = true; } }
+        if (chg) tSheet.getRange(i + 1, acIdx + 1).setValue(JSON.stringify(arr2));
+      }
+    }
   }
   var pSheet = getSheet_(SH_PROJECTS), pv = pSheet.getDataRange().getValues();
   for (var j = 1; j < pv.length; j++) {
