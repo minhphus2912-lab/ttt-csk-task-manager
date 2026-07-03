@@ -688,7 +688,7 @@ thead th{ background: rgba(255,255,255,0.34); }
   // Phát hiện môi trường: chạy trong Google Apps Script (HtmlService) hay bản preview tĩnh.
  var IS_GAS = (typeof google !== 'undefined' && google.script && google.script.run);
  // URL JSON API của backend Google Apps Script (ghi vào Google Sheets).
- var GAS_EXEC_URL = 'https://script.google.com/macros/s/AKfycbzVfiiIoCbmJ4onCv39fUPvtZScv6j7a1HZPdIKD4T1N6mQNFnraCE6Eq1pqFq8ezfLkw/exec';
+ var GAS_EXEC_URL = 'https://script.google.com/macros/s/AKfycbybZBCki3-Bjve2IiAPo7YGuV6f0c5WNJivAfhdDT83Q_lFPX9d-d0yZH77nF-pK1kj/exec';
  // Chọn backend:
  //  - Được GAS phục vụ (IS_GAS) -> dùng google.script.run (nhanh, trong iframe).
  //  - Chạy trên web thật (vd GitHub Pages) -> gọi GAS qua fetch (ghi Sheet thật).

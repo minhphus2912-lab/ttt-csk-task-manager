@@ -122,8 +122,38 @@ function apiFunctions_() {
     saveAvatar: saveAvatar, upsertMember: upsertMember, deleteMember: deleteMember, addCrewMember: addCrewMember, updateCrewMember: updateCrewMember,
     listChats: listChats, getMessages: getMessages, sendMessage: sendMessage, createDM: createDM, createGroup: createGroup,
     renameGroup: renameGroup, addChatMembers: addChatMembers, removeChatMember: removeChatMember, deleteGroup: deleteGroup,
-    aiGenerate: aiGenerate, resetToSeed: resetToSeed
+    aiGenerate: aiGenerate, resetToSeed: resetToSeed,
+    exportAllData: exportAllData, importAllData: importAllData
   };
+}
+// [MIGRATION] Xuất/nhập TOÀN BỘ dữ liệu (kể cả pinHash) để di trú sang tài khoản/Sheet khác. CHỈ Trưởng phòng/ADMIN.
+var MIGRATE_SHEETS_ = [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG, SH_CHATS, SH_MESSAGES];
+function exportAllData(token) {
+  var u = requireUser_(token);
+  if (!isHead_(u)) throw err_('Chỉ Trưởng phòng / ADMIN mới được xuất dữ liệu.');
+  var ss = getSS_(); var out = { __v: 1, sheets: {} };
+  MIGRATE_SHEETS_.forEach(function (n) {
+    var sh = ss.getSheetByName(n);
+    out.sheets[n] = sh ? sh.getDataRange().getDisplayValues() : []; // display values -> chuỗi thuần, tránh lệch kiểu Date khi nhập lại
+  });
+  out.adminPinHash = PropertiesService.getScriptProperties().getProperty('ADMIN_PINHASH') || '';
+  return out;
+}
+function importAllData(token, dump) {
+  var u = requireUser_(token);
+  if (!isHead_(u)) throw err_('Chỉ Trưởng phòng / ADMIN mới được nhập dữ liệu.');
+  if (!dump || !dump.sheets) throw err_('Dữ liệu nhập không hợp lệ.');
+  var ss = getSS_();
+  Object.keys(dump.sheets).forEach(function (n) {
+    var rows = dump.sheets[n] || [];
+    var sh = ss.getSheetByName(n); if (!sh) sh = ss.insertSheet(n);
+    sh.clear();
+    if (rows.length && rows[0].length) sh.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+  });
+  if (dump.adminPinHash) PropertiesService.getScriptProperties().setProperty('ADMIN_PINHASH', dump.adminPinHash);
+  try { CacheService.getScriptCache().remove('CONFIG'); } catch (e) {}
+  try { formatSheets_(); } catch (e) {}
+  return { ok: true, importedSheets: Object.keys(dump.sheets).length };
 }
 function doPost(e) {
   var out;
