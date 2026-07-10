@@ -1215,6 +1215,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      mockSave(db); return Promise.resolve({ ok: true });
    },
    sendRemindersNow: function (tk) { return Promise.resolve({ ok: true, sent: 0 }); },
+   updateMyEmail: function (tk, email) { var db = mockDB(); var u = this._user(db, tk); if (u) { var m = (db.members||[]).filter(function(x){return x.code===u.code;})[0]; if (m) { m.email = String(email||'').trim(); mockSave(db); } } return Promise.resolve({ ok: true, email: String(email||'').trim() }); },
    createProject: function (tk, p) {
      var db = mockDB(); var u = this._user(db, tk);
      if (!u || !hasDeptBoard(u.role)) return Promise.reject(new Error('Bạn không có quyền tạo dự án.'));
@@ -1507,6 +1508,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    completeProject: function (tk, id) { return gasRun('completeProject', tk, id); },
    deleteProject: function (tk, id) { return gasRun('deleteProject', tk, id); },
    sendRemindersNow: function (tk) { return gasRun('sendRemindersNow', tk); },
+   updateMyEmail: function (tk, email) { return gasRun('updateMyEmail', tk, email); },
    changePassword: function (tk, oldPin, newPin) { return gasRun('changePassword', tk, oldPin, newPin); },
    setKpiTarget: function (tk, targets) { return gasRun('setKpiTarget', tk, targets); },
    setCrewRole: function (tk, code, crewRole) { return gasRun('setCrewRole', tk, code, crewRole); },
@@ -1532,7 +1534,7 @@ thead th{ background: rgba(255,255,255,0.34); }
  // Backend thật qua fetch (cùng tập hàm với GasServer; mỗi method chuyển args sang apiCall).
  var FetchServer = (function () {
    var names = ['bootstrap','login','logout','getState','createTask','transitionTask','updateTaskNote',
-     'updateTask','deleteTask','setTaskDeadline','setTaskSupport','createProject','updateProject','completeProject','deleteProject','sendRemindersNow',
+     'updateTask','deleteTask','setTaskDeadline','setTaskSupport','createProject','updateProject','completeProject','deleteProject','sendRemindersNow','updateMyEmail',
      'changePassword','setKpiTarget','setCrewRole','setGrant','saveAvatar','upsertMember',
      'deleteMember','addCrewMember','updateCrewMember',
      'listChats','getMessages','sendMessage','createDM','createGroup','renameGroup','addChatMembers','removeChatMember','deleteGroup',
@@ -2980,8 +2982,10 @@ thead th{ background: rgba(255,255,255,0.34); }
      '<div class="field"><label>Xác nhận mã PIN mới *</label><input id="pw-new2" type="password" inputmode="numeric" required placeholder="Nhập lại mã PIN mới"></div>' +
      '<button type="submit" class="btn btn--primary" id="pw-submit-btn" style="margin-top:12px">Cập nhật mã PIN</button>' +
      '</div></form></div>' +
+     '<div class="card" style="max-width:500px;margin-top:16px"><h3 style="margin-bottom:10px">✉️ Email nhận nhắc việc</h3><form id="my-email-form"><div class="stack"><div class="field"><label>Email của bạn</label><input id="my-email" type="email" value="' + esc(state.user.email || '') + '" placeholder="vd: ten@huflit.edu.vn"></div><button type="submit" class="btn btn--primary" style="margin-top:8px">Lưu email</button><div class="text-xs faint">Email dùng để nhận nhắc việc tự động hằng ngày.</div></div></form></div>' +
      (isManager(state.user) ? '<div class="card" style="max-width:500px;margin-top:16px"><h3 style="margin-bottom:10px">✉️ Nhắc việc qua email</h3><p class="text-sm muted" style="margin-bottom:12px">Gửi email nhắc việc (trễ / đến hạn hôm nay / sắp tới 3 ngày) cho từng người, kèm digest cho Trưởng/Phó phòng. Hệ thống tự gửi mỗi sáng; nút dưới để gửi ngay.</p><button class="btn btn--primary" data-action="send-reminders">Gửi nhắc việc ngay</button><div class="text-xs faint" style="margin-top:8px">Chỉ gửi cho người đã có Email trong hồ sơ nhân sự.</div></div>' : '')
    );
+   var _mef = el('my-email-form'); if (_mef) _mef.addEventListener('submit', function (ev) { ev.preventDefault(); var _v = el('my-email').value.trim(); Server.updateMyEmail(state.token, _v).then(function () { state.user.email = _v; toast('Đã lưu email.', 'ok'); }).catch(handleErr); });
    el('change-pw-form').addEventListener('submit', function (ev) {
      ev.preventDefault();
      if (el('pw-new').value !== el('pw-new2').value) return toast('Mã mới không khớp.', 'err');

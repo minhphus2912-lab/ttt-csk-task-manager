@@ -192,6 +192,19 @@ function sendRemindersNow(token) {
   var u = requireManager_(token);
   return { ok: true, sent: sendTaskReminders_() };
 }
+// Người dùng tự cập nhật EMAIL của CHÍNH MÌNH (nhận nhắc việc). Mọi vai trò; ADMIN ẩn -> bỏ qua.
+function updateMyEmail(token, email) {
+  var u = requireUser_(token);
+  var em = String(email == null ? '' : email).trim();
+  if (em && em.indexOf('@') < 0) throw err_('Email không hợp lệ.');
+  if (isAdminCode_(u.code)) return { ok: true, email: '' };
+  var sh = getSheet_(SH_MEMBERS);
+  var values = sh.getDataRange().getValues();
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][0]).trim().toUpperCase() === String(u.code).toUpperCase()) { setMemberEmail_(sh, i + 1, em); return { ok: true, email: em }; }
+  }
+  throw err_('Không tìm thấy tài khoản.');
+}
 function apiFunctions_() {
   return {
     bootstrap: bootstrap, login: login, logout: logout, getState: getState,
@@ -200,7 +213,7 @@ function apiFunctions_() {
     createProject: createProject, updateProject: updateProject, completeProject: completeProject, deleteProject: deleteProject,
     changePassword: changePassword, setKpiTarget: setKpiTarget, setCrewRole: setCrewRole, setGrant: setGrant,
     saveAvatar: saveAvatar, upsertMember: upsertMember, deleteMember: deleteMember, addCrewMember: addCrewMember, updateCrewMember: updateCrewMember,
-    sendRemindersNow: sendRemindersNow,
+    sendRemindersNow: sendRemindersNow, updateMyEmail: updateMyEmail,
     listChats: listChats, getMessages: getMessages, sendMessage: sendMessage, createDM: createDM, createGroup: createGroup,
     renameGroup: renameGroup, addChatMembers: addChatMembers, removeChatMember: removeChatMember, deleteGroup: deleteGroup,
     aiGenerate: aiGenerate, resetToSeed: resetToSeed,
