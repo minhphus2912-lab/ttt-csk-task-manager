@@ -1,8 +1,10 @@
 # Quản lý Nhân sự & Công việc — Trung Tâm Truyền Thông - Tổ Chức Sự Kiện
 
-> ✅ **BẢN CHÍNH THỨC** — Google Apps Script + Google Sheet thuộc sở hữu tài khoản
-> `drivetttcskdrive2025@huflit.edu.vn`. Toàn bộ dữ liệu thật (nhân sự, công việc, dự án,
-> tin nhắn) đã được di trú sang tài khoản này. Đây là bản chạy chính thức cho nhiều người dùng.
+> ✅ **BẢN CHÍNH THỨC (link .edu):** https://sites.google.com/huflit.edu.vn/quanly-tttt-tcsk/trang-chủ
+>
+> Trang Google Site thuộc `huflit.edu.vn`, nhúng web app Google Apps Script + Google Sheet do tài khoản
+> `drivetttcskdrive2025@huflit.edu.vn` sở hữu. Toàn bộ dữ liệu thật (nhân sự, công việc, dự án, tin nhắn)
+> đã di trú sang tài khoản này. Đây là bản chạy chính thức cho nhiều người dùng.
 
 > 🔗 **Bản demo (GitHub Pages):** https://minhphus2912-lab.github.io/comms-task-manager/
 > Đăng nhập demo: mã `TP01` · `PP01` · `TT01` … — PIN `123456`.
