@@ -19,6 +19,19 @@ function runSetup() { setup_(false); }
 function runSetupWithDemo() { setup_(true); }
 
 /**
+ * NHẮC VIỆC QUA EMAIL — chạy MỘT LẦN trong Apps Script editor.
+ * Vừa cấp quyền gửi mail + tạo trigger, vừa cài lịch gửi digest mỗi sáng ~7:00.
+ * Gỡ trigger cũ trước (idempotent). Muốn gửi thử ngay: chạy sendTaskReminders_().
+ */
+function setupReminders() {
+  ScriptApp.getProjectTriggers().forEach(function (tr) {
+    if (tr.getHandlerFunction() === 'sendTaskReminders_') ScriptApp.deleteTrigger(tr);
+  });
+  ScriptApp.newTrigger('sendTaskReminders_').timeBased().atHour(7).everyDays(1).create();
+  Logger.log('Đã cài lịch nhắc việc qua email: mỗi ngày ~7:00 (giờ VN).');
+}
+
+/**
  * Xoá TOÀN BỘ task + dự án + mục tiêu KPI hiện tại rồi nạp lại DỮ LIỆU GỐC (demo).
  * GIỮ NGUYÊN tài khoản nhân sự & mã PIN. Gọi qua google.script.run.resetToSeed(token).
  * Yêu cầu quyền Trưởng phòng (an toàn — không để ai cũng xoá được dữ liệu).

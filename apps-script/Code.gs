@@ -65,7 +65,7 @@ var PRIORITY_ORDER = ['Thấp', 'Bình thường', 'Cao', 'Khẩn cấp'];
 var PROJ_STATUS = { ACTIVE: 'Đang thực hiện', COMPLETED: 'Đã hoàn thành' };
 
 // Thứ tự cột — KHÔNG đổi nếu đã có dữ liệu. Thêm cột mới ở CUỐI.
-var MEMBER_COLS = ['code', 'name', 'pinHash', 'role', 'title', 'active', 'createdAt', 'grants', 'avatar'];
+var MEMBER_COLS = ['code', 'name', 'pinHash', 'role', 'title', 'active', 'createdAt', 'grants', 'avatar', 'email'];
 // Quyền có thể GIAO thêm (ngoài vai trò). Mở rộng được trong tương lai.
 var GRANT_KEYS = ['MANAGE_CREW'];
 var TASK_COLS = ['taskCode', 'title', 'description', 'assigneeCode', 'difficulty',
@@ -112,6 +112,86 @@ function include(name) {
 // CHỈ cho gọi các hàm trong API_FUNCTIONS (đúng tập mà google.script.run dùng) —
 // mọi kiểm tra quyền/đăng nhập vẫn nằm trong từng hàm (token-based).
 // ---------------------------------------------------------------------------
+// ============================================================================
+//  NHẮC TASK QUA EMAIL — digest hằng ngày (~7:00) cho từng người + Trưởng/Phó phòng.
+// ============================================================================
+var REMIND_APP_URL = 'https://script.google.com/macros/s/AKfycbybZBCki3-Bjve2IiAPo7YGuV6f0c5WNJivAfhdDT83Q_lFPX9d-d0yZH77nF-pK1kj/exec';
+function remEsc_(x) { return String(x == null ? '' : x).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function remShiftYmd_(days) { var d = new Date(); d.setDate(d.getDate() + days); return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); }
+function remFmtDate_(ymd) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || '')); return m ? (m[3] + '/' + m[2] + '/' + m[1]) : '—'; }
+function remBucket_(t, today, soon) {
+  if (!t || t.status === STATUS.DONE) return null;
+  var dl = String(t.deadline || '').slice(0, 10);
+  if (!dl) return null;
+  if (dl < today) return 'overdue';
+  if (dl === today) return 'today';
+  if (dl > today && dl <= soon) return 'soon';
+  return null;
+}
+// Cột 'email' theo HEADER; tự tạo nếu chưa có. Trả chỉ số cột 1-based.
+function memberEmailCol_(sh) {
+  var lastCol = Math.max(sh.getLastColumn(), 1);
+  var H = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function (x) { return String(x).trim(); });
+  var i = H.indexOf('email');
+  if (i >= 0) return i + 1;
+  sh.getRange(1, lastCol + 1).setValue('email');
+  return lastCol + 1;
+}
+function setMemberEmail_(sh, rowNum, email) {
+  try { sh.getRange(rowNum, memberEmailCol_(sh)).setValue(String(email == null ? '' : email).trim()); } catch (e) {}
+}
+function remLi_(t) { return '<li style="margin:4px 0"><b>' + remEsc_(t.title) + '</b> · hạn ' + remFmtDate_(t.deadline) + ' · ' + remEsc_(t.priority || '') + ' · <span style="color:#888">' + remEsc_(t.status) + '</span></li>'; }
+function remSec_(title, arr, color, liFn) { return arr.length ? '<h3 style="color:' + color + ';margin:14px 0 4px">' + title + ' (' + arr.length + ')</h3><ul style="margin:0;padding-left:18px">' + arr.map(liFn || remLi_).join('') + '</ul>' : ''; }
+// Gửi tất cả email nhắc việc. Trả về số email đã gửi.
+function sendTaskReminders_() {
+  var today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  var soon = remShiftYmd_(3);
+  var allMembers = readMembers_();
+  var members = allMembers.filter(function (m) { return m.active; });
+  var tasks = readTasks_();
+  var deptName = getConfigValue_('DepartmentName', 'Trung Tâm Truyền Thông - Tổ Chức Sự Kiện');
+  var nameOf = {}; allMembers.forEach(function (m) { nameOf[m.code] = m.name; });
+  var sent = 0;
+  var foot = '<p style="margin-top:16px"><a href="' + REMIND_APP_URL + '" style="background:#17479D;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none">Mở phần mềm</a></p><p style="color:#999;font-size:12px">' + remEsc_(deptName) + ' — email tự động, vui lòng không trả lời.</p>';
+  // 1) Từng người: việc của MÌNH
+  members.forEach(function (m) {
+    if (!m.email || m.email.indexOf('@') < 0) return;
+    var mine = tasks.filter(function (t) { return isTaskAssignee_(t, m.code) && remBucket_(t, today, soon); });
+    if (!mine.length) return;
+    var ov = mine.filter(function (t) { return remBucket_(t, today, soon) === 'overdue'; });
+    var td = mine.filter(function (t) { return remBucket_(t, today, soon) === 'today'; });
+    var sn = mine.filter(function (t) { return remBucket_(t, today, soon) === 'soon'; });
+    var body = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222">' +
+      '<p>Chào <b>' + remEsc_(m.name) + '</b>, các công việc cần chú ý (' + remFmtDate_(today) + '):</p>' +
+      remSec_('⛔ Quá hạn', ov, '#c0392b') + remSec_('📌 Đến hạn hôm nay', td, '#d35400') +
+      remSec_('🕒 Sắp đến hạn (3 ngày)', sn, '#2c3e50') + foot + '</div>';
+    MailApp.sendEmail({ to: m.email, subject: '🔔 Nhắc việc: ' + mine.length + ' việc cần chú ý (' + remFmtDate_(today) + ')', htmlBody: body });
+    sent++;
+  });
+  // 2) Digest cả phòng cho Trưởng/Phó phòng
+  var rel = tasks.filter(function (t) { return remBucket_(t, today, soon); });
+  if (rel.length) {
+    var liWho = function (t) { var who = taskAssignees_(t).map(function (c) { return nameOf[c] || c; }).join(', ') || 'Chưa giao'; return '<li style="margin:4px 0"><b>' + remEsc_(t.title) + '</b> · ' + remEsc_(who) + ' · hạn ' + remFmtDate_(t.deadline) + ' · <span style="color:#888">' + remEsc_(t.status) + '</span></li>'; };
+    var ov = rel.filter(function (t) { return remBucket_(t, today, soon) === 'overdue'; });
+    var td = rel.filter(function (t) { return remBucket_(t, today, soon) === 'today'; });
+    var sn = rel.filter(function (t) { return remBucket_(t, today, soon) === 'soon'; });
+    var dbody = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222"><p><b>Tổng hợp công việc toàn phòng</b> (' + remFmtDate_(today) + '):</p>' +
+      remSec_('⛔ Quá hạn', ov, '#c0392b', liWho) + remSec_('📌 Đến hạn hôm nay', td, '#d35400', liWho) +
+      remSec_('🕒 Sắp đến hạn (3 ngày)', sn, '#2c3e50', liWho) + foot + '</div>';
+    members.forEach(function (m) {
+      if ((m.role === ROLE.HEAD || m.role === ROLE.DEPUTY) && m.email && m.email.indexOf('@') >= 0) {
+        MailApp.sendEmail({ to: m.email, subject: '🔔 [Digest phòng] ' + rel.length + ' việc trễ/đến hạn (' + remFmtDate_(today) + ')', htmlBody: dbody });
+        sent++;
+      }
+    });
+  }
+  return sent;
+}
+// Gửi ngay (thủ công) — Trưởng/Phó phòng bấm nút để test/nhắc liền.
+function sendRemindersNow(token) {
+  var u = requireManager_(token);
+  return { ok: true, sent: sendTaskReminders_() };
+}
 function apiFunctions_() {
   return {
     bootstrap: bootstrap, login: login, logout: logout, getState: getState,
@@ -120,6 +200,7 @@ function apiFunctions_() {
     createProject: createProject, updateProject: updateProject, completeProject: completeProject, deleteProject: deleteProject,
     changePassword: changePassword, setKpiTarget: setKpiTarget, setCrewRole: setCrewRole, setGrant: setGrant,
     saveAvatar: saveAvatar, upsertMember: upsertMember, deleteMember: deleteMember, addCrewMember: addCrewMember, updateCrewMember: updateCrewMember,
+    sendRemindersNow: sendRemindersNow,
     listChats: listChats, getMessages: getMessages, sendMessage: sendMessage, createDM: createDM, createGroup: createGroup,
     renameGroup: renameGroup, addChatMembers: addChatMembers, removeChatMember: removeChatMember, deleteGroup: deleteGroup,
     aiGenerate: aiGenerate, resetToSeed: resetToSeed,
@@ -274,6 +355,8 @@ function clearConfigCache() { CacheService.getScriptCache().remove('CONFIG'); }
 function readMembers_() {
   var sh = getSheet_(SH_MEMBERS);
   var values = sh.getDataRange().getValues();
+  var _H = values.length ? values[0].map(function (x) { return String(x).trim(); }) : [];
+  var _iEmail = _H.indexOf('email');
   var out = [];
   for (var i = 1; i < values.length; i++) {
     var row = values[i];
@@ -287,7 +370,8 @@ function readMembers_() {
       active: row[5] === true || String(row[5]).toUpperCase() === 'TRUE',
       createdAt: String(row[6] || ''),
       grants: parseGrants_(row[7]),
-      avatar: String(row[8] || '')
+      avatar: String(row[8] || ''),
+      email: _iEmail >= 0 ? String(row[_iEmail] || '').trim() : ''
     });
   }
   return out;
@@ -302,7 +386,7 @@ function parseGrants_(raw) {
 
 function publicMember_(m) {
   if (!m) return null;
-  return { code: m.code, name: m.name, role: m.role, title: m.title, active: m.active, grants: m.grants || [], avatar: m.avatar || '' };
+  return { code: m.code, name: m.name, role: m.role, title: m.title, active: m.active, grants: m.grants || [], avatar: m.avatar || '', email: m.email || '' };
 }
 
 // ---------------------------------------------------------------------------
@@ -1280,6 +1364,7 @@ function upsertMember(token, payload) {
       var pin = String(payload.pin || '').trim();
       if (pin.length < 4) throw err_('Mã cá nhân (PIN) tối thiểu 4 ký tự.');
       sh.appendRow([code, name, hashPin_(pin), role, title, active, nowIso_(), '[]', '']);
+      if (payload.email !== undefined) setMemberEmail_(sh, sh.getLastRow(), payload.email);
     } else {
       var cur = values[rowIdx];
       if (String(cur[3]).trim() === ROLE.ADMIN) throw err_('Không thể chỉnh sửa tài khoản ADMIN tại đây (đổi PIN trong mục Cài đặt).');
@@ -1291,6 +1376,7 @@ function upsertMember(token, payload) {
       var updated = [code, name, pinHash, role, title, active, String(cur[6] || nowIso_()),
                      (cur[7] === undefined || cur[7] === '') ? '[]' : cur[7], (cur[8] === undefined ? '' : cur[8])]; // giữ avatar (cột 9)
       sh.getRange(rowIdx + 1, 1, 1, updated.length).setValues([updated]);
+      if (payload.email !== undefined) setMemberEmail_(sh, rowIdx + 1, payload.email);
       // Đổi MÃ -> cascade mọi tham chiếu + sửa phiên của chính người gọi nếu họ tự đổi mã.
       if (origCode && code !== origCode) {
         cascadeMemberCode_(origCode, code);
@@ -1388,6 +1474,7 @@ function addCrewMember(token, payload) {
     var values = sh.getDataRange().getValues();
     if (memberCodeExists_(values, code, '')) throw err_('Mã thành viên đã tồn tại.');
     sh.appendRow([code, name, hashPin_(pin), role, title, true, nowIso_(), '[]', '']);
+     if (payload.email !== undefined) setMemberEmail_(sh, sh.getLastRow(), payload.email);
     return { ok: true, code: code };
   } finally {
     lock.releaseLock();
@@ -1433,6 +1520,7 @@ function updateCrewMember(token, payload) {
     var updated = [code, name, pinHash, role, title, active, String(cur[6] || nowIso_()),
                    (cur[7] === undefined || cur[7] === '') ? '[]' : cur[7], (cur[8] === undefined ? '' : cur[8])]; // giữ grants + avatar
     sh.getRange(rowIdx + 1, 1, 1, updated.length).setValues([updated]);
+    if (payload.email !== undefined) setMemberEmail_(sh, rowIdx + 1, payload.email);
     if (code !== origCode) {
       cascadeMemberCode_(origCode, code);
       if (origCode === String(u.code).toUpperCase()) CacheService.getScriptCache().put('S_' + token, code, SESSION_TTL);

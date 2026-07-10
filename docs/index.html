@@ -1216,6 +1216,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      db.tasks = db.tasks.filter(function (x) { return x.taskCode !== code; });
      mockSave(db); return Promise.resolve({ ok: true });
    },
+   sendRemindersNow: function (tk) { return Promise.resolve({ ok: true, sent: 0 }); },
    createProject: function (tk, p) {
      var db = mockDB(); var u = this._user(db, tk);
      if (!u || !hasDeptBoard(u.role)) return Promise.reject(new Error('Bạn không có quyền tạo dự án.'));
@@ -1507,6 +1508,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    updateProject: function (tk, p) { return gasRun('updateProject', tk, p); },
    completeProject: function (tk, id) { return gasRun('completeProject', tk, id); },
    deleteProject: function (tk, id) { return gasRun('deleteProject', tk, id); },
+   sendRemindersNow: function (tk) { return gasRun('sendRemindersNow', tk); },
    changePassword: function (tk, oldPin, newPin) { return gasRun('changePassword', tk, oldPin, newPin); },
    setKpiTarget: function (tk, targets) { return gasRun('setKpiTarget', tk, targets); },
    setCrewRole: function (tk, code, crewRole) { return gasRun('setCrewRole', tk, code, crewRole); },
@@ -1532,7 +1534,7 @@ thead th{ background: rgba(255,255,255,0.34); }
  // Backend thật qua fetch (cùng tập hàm với GasServer; mỗi method chuyển args sang apiCall).
  var FetchServer = (function () {
    var names = ['bootstrap','login','logout','getState','createTask','transitionTask','updateTaskNote',
-     'updateTask','deleteTask','setTaskDeadline','setTaskSupport','createProject','updateProject','completeProject','deleteProject',
+     'updateTask','deleteTask','setTaskDeadline','setTaskSupport','createProject','updateProject','completeProject','deleteProject','sendRemindersNow',
      'changePassword','setKpiTarget','setCrewRole','setGrant','saveAvatar','upsertMember',
      'deleteMember','addCrewMember','updateCrewMember',
      'listChats','getMessages','sendMessage','createDM','createGroup','renameGroup','addChatMembers','removeChatMember','deleteGroup',
@@ -2869,12 +2871,13 @@ thead th{ background: rgba(255,255,255,0.34); }
      '<div class="field"><label>Họ và tên *</label><input id="ac-name" required placeholder="Nhập họ tên"></div>' +
      '<div class="field"><label>Vai trò Crew *</label><select id="ac-role">' + CREW_ROLE_OPTIONS.map(function (r) { return '<option value="' + r[0] + '">' + esc(r[1]) + '</option>'; }).join('') + '</select></div>' +
      '<div class="field"><label>Chuyên môn</label><input id="ac-title" placeholder="VD: Quay phim"></div>' +
+     '<div class="field"><label>Email (nhận nhắc việc)</label><input id="ac-email" type="email" value="' + '' + '" placeholder="vd: ten@huflit.edu.vn"></div>' +
      '<div class="field full"><label>Mã PIN đăng nhập *</label><input id="ac-pin" type="text" required placeholder="Tối thiểu 4 ký tự"></div>' +
      '</div></div><div class="modal-foot"><button type="button" class="btn btn--ghost" data-action="close-modal">Hủy</button><button type="submit" class="btn btn--primary" id="ac-go">Thêm vào Crew</button></div></form>';
    openModal(html);
    $('#add-crew-form').addEventListener('submit', function (ev) {
      ev.preventDefault(); var b = el('ac-go'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
-     Server.addCrewMember(state.token, { code: el('ac-code').value.trim(), name: el('ac-name').value.trim(), role: el('ac-role').value, title: el('ac-title').value.trim(), pin: el('ac-pin').value.trim() })
+     Server.addCrewMember(state.token, { code: el('ac-code').value.trim(), name: el('ac-name').value.trim(), role: el('ac-role').value, title: el('ac-title').value.trim(), pin: el('ac-pin').value.trim(), email: el('ac-email') ? el('ac-email').value.trim() : '' })
        .then(refreshState).then(function () { closeModal(); toast('Đã thêm nhân sự vào Crew.', 'ok'); renderPage(); })
        .catch(function (e) { b.disabled = false; b.textContent = 'Thêm vào Crew'; handleErr(e); });
    });
@@ -2890,13 +2893,14 @@ thead th{ background: rgba(255,255,255,0.34); }
      '<div class="field"><label>Họ và tên *</label><input id="ec-name" required value="' + esc(m.name) + '"></div>' +
      '<div class="field"><label>Vai trò Crew *</label><select id="ec-role">' + CREW_ROLE_OPTIONS.map(function (r) { return '<option value="' + r[0] + '"' + (m.role === r[0] ? ' selected' : '') + '>' + esc(r[1]) + '</option>'; }).join('') + '</select></div>' +
      '<div class="field"><label>Chuyên môn</label><input id="ec-title" value="' + esc(m.title || '') + '"></div>' +
+     '<div class="field"><label>Email (nhận nhắc việc)</label><input id="ec-email" type="email" value="' + esc(m.email||'') + '" placeholder="vd: ten@huflit.edu.vn"></div>' +
      '<div class="field"><label>Mã PIN (để trống nếu không đổi)</label><input id="ec-pin" type="text" placeholder="Tối thiểu 4 ký tự"></div>' +
      '<div class="field"><label>Trạng thái</label><select id="ec-active"><option value="1"' + (m.active ? ' selected' : '') + '>Đang hoạt động</option><option value="0"' + (!m.active ? ' selected' : '') + '>Vô hiệu hóa</option></select></div>' +
      '</div></div><div class="modal-foot"><button type="button" class="btn btn--ghost" data-action="close-modal">Hủy</button><button type="submit" class="btn btn--primary" id="ec-go">Lưu thay đổi</button></div></form>';
    openModal(html);
    $('#ec-form').addEventListener('submit', function (ev) {
      ev.preventDefault(); var b = el('ec-go'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
-     Server.updateCrewMember(state.token, { origCode: m.code, code: el('ec-code').value.trim().toUpperCase(), name: el('ec-name').value.trim(), role: el('ec-role').value, title: el('ec-title').value.trim(), pin: el('ec-pin').value.trim(), active: el('ec-active').value === '1' })
+     Server.updateCrewMember(state.token, { origCode: m.code, code: el('ec-code').value.trim().toUpperCase(), name: el('ec-name').value.trim(), role: el('ec-role').value, title: el('ec-title').value.trim(), email: el('ec-email') ? el('ec-email').value.trim() : '', pin: el('ec-pin').value.trim(), active: el('ec-active').value === '1' })
        .then(refreshState).then(function () { saveSession(); closeModal(); toast('Đã cập nhật nhân sự Crew.', 'ok'); renderPage(); })
        .catch(function (e) { b.disabled = false; b.textContent = 'Lưu thay đổi'; handleErr(e); });
    });
@@ -2977,7 +2981,8 @@ thead th{ background: rgba(255,255,255,0.34); }
      '<div class="field"><label>Mã PIN mới *</label><input id="pw-new" type="password" inputmode="numeric" required placeholder="Ít nhất 4 ký tự số"></div>' +
      '<div class="field"><label>Xác nhận mã PIN mới *</label><input id="pw-new2" type="password" inputmode="numeric" required placeholder="Nhập lại mã PIN mới"></div>' +
      '<button type="submit" class="btn btn--primary" id="pw-submit-btn" style="margin-top:12px">Cập nhật mã PIN</button>' +
-     '</div></form></div>'
+     '</div></form></div>' +
+     (isManager(state.user) ? '<div class="card" style="max-width:500px;margin-top:16px"><h3 style="margin-bottom:10px">✉️ Nhắc việc qua email</h3><p class="text-sm muted" style="margin-bottom:12px">Gửi email nhắc việc (trễ / đến hạn hôm nay / sắp tới 3 ngày) cho từng người, kèm digest cho Trưởng/Phó phòng. Hệ thống tự gửi mỗi sáng; nút dưới để gửi ngay.</p><button class="btn btn--primary" data-action="send-reminders">Gửi nhắc việc ngay</button><div class="text-xs faint" style="margin-top:8px">Chỉ gửi cho người đã có Email trong hồ sơ nhân sự.</div></div>' : '')
    );
    el('change-pw-form').addEventListener('submit', function (ev) {
      ev.preventDefault();
@@ -3114,6 +3119,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      '<div class="field"><label>Họ và tên *</label><input id="m-name" required value="' + esc(m ? m.name : '') + '" placeholder="Nhập họ tên đầy đủ"></div>' +
      '<div class="field"><label>Vai trò hệ thống *</label><select id="m-role">' + roles.map(function (r) { return '<option value="' + r[0] + '"' + (m && m.role === r[0] ? ' selected' : '') + '>' + r[1] + '</option>'; }).join('') + '</select></div>' +
      '<div class="field"><label>Chức vụ / Chuyên môn</label><input id="m-title" value="' + esc(m ? m.title : '') + '" placeholder="VD: Chuyên viên Nội dung"></div>' +
+     '<div class="field"><label>Email (nhận nhắc việc)</label><input id="m-email" type="email" value="' + esc(m ? (m.email||'') : '') + '" placeholder="vd: ten@huflit.edu.vn"></div>' +
      '<div class="field full"><label>Mã PIN đăng nhập' + (m ? ' (Để trống nếu không đổi)' : ' *') + '</label><input id="m-pin" type="text" placeholder="Tối thiểu 4 ký tự số" ' + (!m ? 'required' : '') + '></div>' +
      (m ? '<div class="field full"><label>Trạng thái hoạt động</label><select id="m-active"><option value="1"' + (m.active ? ' selected' : '') + '>Đang hoạt động</option><option value="0"' + (!m.active ? ' selected' : '') + '>Vô hiệu hóa (Khóa tài khoản)</option></select></div>' : '') +
      '</div></div><div class="modal-foot"><button type="button" class="btn btn--ghost" data-action="close-modal">Hủy</button>' +
@@ -3121,7 +3127,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    openModal(html);
    $('#member-form').addEventListener('submit', function (ev) {
      ev.preventDefault();
-     var payload = { code: el('m-code').value.trim().toUpperCase(), name: el('m-name').value.trim(), role: el('m-role').value, title: el('m-title').value.trim(), pin: el('m-pin').value.trim() };
+     var payload = { code: el('m-code').value.trim().toUpperCase(), name: el('m-name').value.trim(), role: el('m-role').value, title: el('m-title').value.trim(), pin: el('m-pin').value.trim(), email: el('m-email') ? el('m-email').value.trim() : '' };
      if (m) payload.origCode = m.code; // sửa: gửi mã CŨ để định vị dòng (mã có thể đổi)
      if (el('m-active')) payload.active = el('m-active').value === '1';
      var b = el('member-go'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
@@ -3645,6 +3651,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      }
    }
    else if (action === 'export-xlsx') exportToExcel(); else if (action === 'export-xlsx-crew') exportCrewToExcel();
+   else if (action === 'send-reminders') { var _b = node; _b.disabled = true; var _t = _b.textContent; _b.textContent = 'Đang gửi…'; Server.sendRemindersNow(state.token).then(function (r) { toast('Đã gửi ' + (r && r.sent || 0) + ' email nhắc việc.', 'ok'); }).catch(handleErr).then(function(){ _b.disabled = false; _b.textContent = _t; }); }
    else if (action === 'proj-folder-toggle') { state.projFolderOpen = state.projFolderOpen || {}; var _pid = node.getAttribute('data-id'); state.projFolderOpen[_pid] = !state.projFolderOpen[_pid]; renderPage(); }
    else if (action === 'sum-cat') { _sumNav = { level: 'list', key: node.getAttribute('data-key') }; sumRerender(); }
    else if (action === 'sum-back') { if (_sumNav.level === 'detail') { _sumNav = { level: 'list', key: _sumNav.key, code: null }; } else { _sumNav = { level: 'cats', key: null, code: null }; } sumRerender(); }
