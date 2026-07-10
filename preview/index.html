@@ -2120,7 +2120,8 @@ thead th{ background: rgba(255,255,255,0.34); }
    openModal(html, true);
  }
  // Tổng hợp/Thông báo = POPUP hiện 1 lần mỗi khi vào hệ thống (không phải mục menu riêng).
- var _sumNav = { level: 'cats', key: null };
+ var _sumNav = { level: 'cats', key: null, code: null };
+ var _sumReturnCode = null;
  function sumRerender() { var b = el('sum-body'); if (b) b.innerHTML = summaryBodyHtml((el('sum-filter')||{}).value || '', (el('sum-group')||{}).value || ''); }
  function openSummaryModal() {
    if (!state.user) return;
@@ -2151,6 +2152,31 @@ thead th{ background: rgba(255,255,255,0.34); }
    });
    var bks = summaryBuckets();
    function sortArr(a) { return a.slice().sort(function (x, y) { return (PRIORITY_RANK[x.priority]||2)-(PRIORITY_RANK[y.priority]||2) || (x.deadline||'').localeCompare(y.deadline||''); }); }
+   // CẤP 3 — chi tiết task + ĐẨY TRẠNG THÁI, có nút quay lại cửa sổ thông báo
+   if (_sumNav.level === 'detail') {
+     var t3 = (state.tasks||[]).filter(function(x){return x.taskCode===_sumNav.code;})[0];
+     if (t3) {
+       var pjn = t3.projectId ? (((state.projects||[]).filter(function(p){return p.id===t3.projectId;})[0]||{}).name || t3.projectId) : '';
+       var dr = function(l,v){ return '<div class="row row--between" style="padding:7px 0;border-bottom:1px dashed rgba(0,0,0,.07);gap:12px"><span class="faint text-sm" style="min-width:110px">'+l+'</span><span class="text-sm" style="font-weight:600;text-align:right">'+v+'</span></div>'; };
+       var acts = taskActions(t3);
+       var force = canForceStatus(t3) ? '<button class="btn btn--ghost btn--sm" data-action="force-status" data-code="'+esc(t3.taskCode)+'">\u2699\ufe0f \u00c9p \u0111\u1ed5i tr\u1ea1ng th\u00e1i</button>' : '';
+       return '<div class="row row--between" style="margin-bottom:10px;align-items:center">' +
+           '<button type="button" class="btn btn--ghost btn--sm" data-action="sum-back">\u2190 Danh s\u00e1ch</button>' +
+           '<span class="pill '+(STATUS_CLASS[t3.status]||'')+'"><span class="dot"></span>'+esc(t3.status)+'</span></div>' +
+         '<h3 style="margin:2px 0 10px">'+esc(t3.title)+'</h3>' +
+         dr('M\u00e3 vi\u1ec7c','<span class="mono">'+esc(t3.taskCode)+'</span>') +
+         dr('Ng\u01b0\u1eddi th\u1ef1c hi\u1ec7n', isUnclaimed(t3) ? 'Ch\u01b0a \u0111\u0103ng k\u00fd' : esc(assigneeNames(t3))) +
+         dr('Ng\u01b0\u1eddi giao', esc(creatorName(t3))) +
+         dr('H\u1ea1n', t3.deadline ? esc(fmtDateVN(t3.deadline)) : '\u2014') +
+         dr('\u01afu ti\u00ean', esc(t3.priority)) + dr('\u0110\u1ed9 kh\u00f3', esc(t3.difficulty)) +
+         (pjn ? dr('D\u1ef1 \u00e1n', esc(pjn)) : '') +
+         (t3.description ? '<div style="margin-top:10px"><div class="faint text-sm" style="margin-bottom:4px">M\u00f4 t\u1ea3</div><div class="task-note" style="margin-top:0">'+esc(t3.description).replace(/\n/g,'<br>')+'</div></div>' : '') +
+         (t3.note ? '<div style="margin-top:8px"><div class="faint text-sm" style="margin-bottom:4px">Ghi ch\u00fa</div><div class="task-note" style="margin-top:0">'+esc(t3.note).replace(/\n/g,'<br>')+'</div></div>' : '') +
+         '<div class="row row--wrap" style="gap:8px;margin-top:14px">'+acts+force+'</div>' +
+         ((acts||force) ? '' : '<div class="faint text-sm" style="margin-top:10px">B\u1ea1n kh\u00f4ng c\u00f3 quy\u1ec1n \u0111\u1ed5i tr\u1ea1ng th\u00e1i vi\u1ec7c n\u00e0y.</div>');
+     }
+     _sumNav.level = 'list';
+   }
    // CẤP 2 — danh sách task của MỘT danh mục (bấm 1 task -> chi tiết)
    if (_sumNav.level === 'list') {
      var bk = bks.filter(function (x) { return x.key === _sumNav.key; })[0] || bks[0];
@@ -3306,6 +3332,7 @@ thead th{ background: rgba(255,255,255,0.34); }
  // Modal nhập LINK cho bước Gửi draft (reportLink) hoặc Xác nhận hoàn thành (completeLink).
  function openTaskLink(code, act) {
    var t = state.tasks.filter(function(x){return x.taskCode===code;})[0]; if(!t) return;
+   if (el('sum-body')) _sumReturnCode = code;
    var isSubmit = (act === 'submit');
    var head = isSubmit ? '' + ic('send2') + ' Gửi draft' : '' + ic('check') + ' Xác nhận hoàn thành';
    var label = isSubmit ? 'Link draft (Drive/Figma/Docs…)' : 'Link hoàn thành (bản final đã duyệt)';
@@ -3353,6 +3380,7 @@ thead th{ background: rgba(255,255,255,0.34); }
  // Modal ÉP đổi trạng thái (quản lý) — bỏ qua quy trình tuần tự.
  function openForceStatus(code) {
    var t = state.tasks.filter(function(x){return x.taskCode===code;})[0]; if(!t) return;
+   if (el('sum-body')) _sumReturnCode = code;
    var opts = STATUS_ORDER.map(function(s){ return '<button type="button" class="btn '+(s===t.status?'btn--primary':'btn--ghost')+' btn--sm" data-action="do-force" data-code="'+esc(code)+'" data-status="'+esc(s)+'">'+esc(s)+'</button>'; }).join(' ');
    var html = '<div class="modal-head"><h2>⚙️ Đổi trạng thái (quản lý)</h2><button class="icon-btn" data-action="close-modal">✕</button></div>' +
      '<div class="modal-body"><div class="text-sm muted" style="margin-bottom:8px">Mã: <b>'+esc(t.taskCode)+'</b><br>'+esc(t.title)+'<br>Người thực hiện: <b>'+esc(assigneeNames(t))+'</b></div>' +
@@ -3617,8 +3645,8 @@ thead th{ background: rgba(255,255,255,0.34); }
    else if (action === 'export-xlsx') exportToExcel(); else if (action === 'export-xlsx-crew') exportCrewToExcel();
    else if (action === 'proj-folder-toggle') { state.projFolderOpen = state.projFolderOpen || {}; var _pid = node.getAttribute('data-id'); state.projFolderOpen[_pid] = !state.projFolderOpen[_pid]; renderPage(); }
    else if (action === 'sum-cat') { _sumNav = { level: 'list', key: node.getAttribute('data-key') }; sumRerender(); }
-   else if (action === 'sum-back') { _sumNav = { level: 'cats', key: null }; sumRerender(); }
-   else if (action === 'sum-task') { var _sc = node.getAttribute('data-code'); closeModal(); if (_sc) openTaskDetail(_sc); }
+   else if (action === 'sum-back') { if (_sumNav.level === 'detail') { _sumNav = { level: 'list', key: _sumNav.key, code: null }; } else { _sumNav = { level: 'cats', key: null, code: null }; } sumRerender(); }
+   else if (action === 'sum-task') { _sumNav = { level: 'detail', key: _sumNav.key, code: node.getAttribute('data-code') }; sumRerender(); }
  });
 
  function toggleKebab(btn) {
@@ -3870,6 +3898,7 @@ thead th{ background: rgba(255,255,255,0.34); }
  }
 
  function doTransition(code, act, link) {
+   var _fromSum = !!el('sum-body') || _sumReturnCode === code; _sumReturnCode = null;
    Server.transitionTask(state.token, code, act, link||'')
      .then(function(t) { return refreshState().then(() => t); })
      .then(function(t) {
@@ -3880,7 +3909,8 @@ thead th{ background: rgba(255,255,255,0.34); }
          var msg = { start:'Bắt đầu làm việc', pause:'Đã tạm hoãn', resume:'Tiếp tục làm việc', submit:'Đã gửi draft', claim:'' + ic('hand') + ' Đã nhận việc — chúc bạn hoàn thành tốt!', force:'⚙️ Đã đổi trạng thái công việc' };
          toast(msg[act] || 'Cập nhật thành công', 'ok');
        }
-       renderPage(); 
+       renderPage();
+       if (_fromSum) { if (!el('sum-body')) openSummaryModal(); _sumNav = { level: 'detail', key: _sumNav.key, code: code }; sumRerender(); }
      }).catch(handleErr);
  }
 
