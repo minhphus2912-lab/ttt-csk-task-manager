@@ -222,8 +222,8 @@
 
  function computeStats(tasks, type, anchorYmd) {
    var pk = periodCode(anchorYmd, type);
-   var assigned = tasks.filter(function (t) { return periodKeyOf(t.createdAt, type) === pk; });
-   var doneInP = tasks.filter(function (t) { return t.status === STATUS.DONE && t.completedAt && periodKeyOf(t.completedAt, type) === pk; });
+   var assigned = tasks.filter(function (t) { return periodKeyOf(t.deadline || t.createdAt, type) === pk; });
+   var doneInP = assigned.filter(function (t) { return t.status === STATUS.DONE; });
    var assignedPts = assigned.length, donePts = doneInP.length; // KPI điểm đã bỏ — giữ field = số lượng để không vỡ
    var byPriority = {}; PRIORITY_ORDER.forEach(function (p) { byPriority[p] = 0; });
    assigned.forEach(function (t) { if (byPriority[t.priority] != null) byPriority[t.priority]++; });
@@ -239,8 +239,8 @@
    var byDiff = {}; DIFF_ORDER.forEach(function (d) { byDiff[d] = 0; });
    assigned.forEach(function (t) { if (byDiff[t.difficulty] != null) byDiff[t.difficulty]++; });
    var byStatus = {}; STATUS_ORDER.forEach(function (s) { byStatus[s] = 0; });
-   tasks.forEach(function (t) { if (byStatus[t.status] != null) byStatus[t.status]++; });
-   var overdueOpen = tasks.filter(function (t) { return t.status !== STATUS.DONE && t.deadline && todayStr() > t.deadline; }).length;
+   assigned.forEach(function (t) { if (byStatus[t.status] != null) byStatus[t.status]++; });
+   var overdueOpen = assigned.filter(function (t) { return t.status !== STATUS.DONE && t.deadline && todayStr() > t.deadline; }).length;
    var links = doneInP.filter(function (t) { return t.reportLink; }).sort(function (a, b) { return (b.completedAt || '').localeCompare(a.completedAt || ''); });
    var completedOfAssigned = assigned.filter(function (t) { return t.status === STATUS.DONE; }).length;
    var taskCompletionRate = assigned.length > 0 ? (completedOfAssigned / assigned.length * 100) : 0;
@@ -250,7 +250,7 @@
      assignedPts: assignedPts, donePts: donePts,
      taskCompletionRate: taskCompletionRate, totalInP: assigned.length, completedInP: completedOfAssigned,
      avgCycleH: avg(cyc), avgLeadH: avg(lead), avgPauseH: avg(pauseT),
-     punc: punc, byDiff: byDiff, byPriority: byPriority, byStatus: byStatus, overdueOpen: overdueOpen, totalTasks: tasks.length, links: links
+     punc: punc, byDiff: byDiff, byPriority: byPriority, byStatus: byStatus, overdueOpen: overdueOpen, dailyCount: assigned.filter(function(t){return !t.projectId;}).length, projCount: assigned.filter(function(t){return t.projectId;}).length, totalTasks: tasks.length, links: links
    };
  }
 
@@ -1157,9 +1157,12 @@
  }
 
  function setTitle(title, sub) { el('page-title').innerHTML = '<h1>' + esc(title) + '</h1>' + (sub ? '<div class="sub">' + esc(sub) + '</div>' : ''); }
- function setView(html) { el('view').innerHTML = '<div class="page">' + html + '</div>'; }
+ var _animateView = false, _lastViewKey = '';
+ function setView(html) { el('view').innerHTML = '<div class="page' + (_animateView ? ' page--enter' : '') + '">' + html + '</div>'; _animateView = false; }
 
  function renderPage() {
+   var _vk = state.page + '|' + (state.workTab||'') + '|' + (state.crewTab||'') + '|' + (state.selectedProjectId||'');
+   _animateView = (_vk !== _lastViewKey); _lastViewKey = _vk;
    // Người THUẦN crew (không có bảng Phòng): chỉ ở mục Crew, Lịch cá nhân & Cài đặt.
    if (!hasDeptBoard(state.user.role) && state.page !== 'crew' && state.page !== 'settings' && state.page !== 'calendar' && state.page !== 'chat') state.page = 'crew';
    Array.prototype.forEach.call(document.querySelectorAll('.nav-link'), function (n) {
@@ -1212,7 +1215,7 @@
  // Bảng chi tiết "việc trong ngày" hiện bên dưới lịch khi chọn 1 ngày.
  function calDayDetail(tasksArr, showName) {
    var sel = state.calSelectedDay; if (!sel) return '';
-   var dts = (tasksArr || []).filter(function (t) { return ymd(t.deadline) === sel; });
+   var dts = (tasksArr || []).filter(function (t) { return calDateOf(t) === sel; });
    if (!dts.length) return '';
    var rows = dts.slice().sort(function (a, b) { return (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2); }).map(function (t) {
      return '<div class="task-row' + (isUnclaimed(t) ? ' task-row--unclaimed' : '') + '" data-action="open-task-detail" data-code="' + esc(t.taskCode) + '">' +
@@ -1224,12 +1227,13 @@
    return '<div class="card stack" style="margin-top:12px"><div class="row row--between"><h3>' + ic('pin') + ' Việc đến hạn ngày ' + esc(fmtDateVN(sel)) + ' (' + dts.length + ')</h3><button class="btn btn--ghost btn--sm" data-action="cal-clear-day">✕ Đóng</button></div><div class="task-rows">' + rows + '</div></div>';
  }
  // Dựng lưới lịch (grid + khay chưa hạn) cho MỘT tập task bất kỳ, theo state.period hiện tại.
- function buildCalGrid(tasksArr, opts) {
+ function calDateOf(t){ return (t && t.status === STATUS.DONE) ? (ymd(t.completedAt) || ymd(t.deadline)) : ymd(t.deadline); }
+  function buildCalGrid(tasksArr, opts) {
    var showName = !!(opts && opts.showName);
    var p = state.period;
    var dayMap = {}, monthCount = {}, withDl = 0;
    tasksArr.forEach(function (t) {
-     var dl = ymd(t.deadline);
+     var dl = calDateOf(t);
      if (!dl) return;
      withDl++;
      (dayMap[dl] = dayMap[dl] || []).push(t);
@@ -1391,7 +1395,8 @@
      { key:'new',       icon:'' + ic('star') + '', label:'Task mới (chưa bắt đầu)',                 color:'#475569',           fn:function(t){ return t.status===STATUS.TODO; } },
      { key:'running',   icon:'⚙️', label:'Đang làm',                                color:'#17479D',           fn:function(t){ return t.status===STATUS.RUNNING || t.status===STATUS.PENDING; } },
      { key:'feedback',  icon:'' + ic('send2') + '', label:'Có feedback / chờ duyệt (đã gửi draft)',  color:'#EE6823',           fn:function(t){ return t.status===STATUS.SENT; } },
-     { key:'unclaimed', icon:'' + ic('pin') + '', label:'Chưa đăng ký (chưa giao)',                color:'var(--c-primary-active)', fn:function(t){ return isUnclaimed(t); } }
+     { key:'unclaimed', icon:'' + ic('pin') + '', label:'Chưa đăng ký (chưa giao)',                color:'var(--c-primary-active)', fn:function(t){ return isUnclaimed(t); } },
+     { key:'done',      icon:'✅', label:'Đã hoàn thành',                            color:'#16a34a',           fn:function(t){ return t.status===STATUS.DONE; } }
    ];
  }
  // Bấm vào 1 chuyên viên ở Bảng điều khiển -> popup chi tiết các VIỆC ĐANG CHẠY của họ.
@@ -1441,8 +1446,11 @@
    openModal(html, true);
  }
  // Tổng hợp/Thông báo = POPUP hiện 1 lần mỗi khi vào hệ thống (không phải mục menu riêng).
+ var _sumNav = { level: 'cats', key: null };
+ function sumRerender() { var b = el('sum-body'); if (b) b.innerHTML = summaryBodyHtml((el('sum-filter')||{}).value || '', (el('sum-group')||{}).value || ''); }
  function openSummaryModal() {
    if (!state.user) return;
+   _sumNav = { level: 'cats', key: null };
    // Bộ lọc theo Người thực hiện (những mã có việc + viewer được phép thấy), xếp A→Z.
    var who = {};
    (state.tasks || []).forEach(function (t) { assigneesOf(t).forEach(function (c) { if (canSeeMember(c)) who[c] = memberName(c); }); });
@@ -1456,35 +1464,42 @@
      '<div id="sum-body">' + summaryBodyHtml('', '') + '</div>' +
      '</div><div class="modal-foot"><button type="button" class="btn btn--primary" data-action="close-modal">Bắt đầu làm việc →</button></div>';
    openModal(html, true);
-   var sumRefresh = function () { var b = el('sum-body'); if (b) b.innerHTML = summaryBodyHtml((el('sum-filter')||{}).value || '', (el('sum-group')||{}).value || ''); };
-   var sf = el('sum-filter'); if (sf) sf.addEventListener('change', sumRefresh);
-   var sg = el('sum-group'); if (sg) sg.addEventListener('change', sumRefresh);
+   var sf = el('sum-filter'); if (sf) sf.addEventListener('change', function () { _sumNav = { level: 'cats', key: null }; sumRerender(); });
+   var sg = el('sum-group'); if (sg) sg.addEventListener('change', function () { _sumNav = { level: 'cats', key: null }; sumRerender(); });
  }
  // Nội dung popup Tổng hợp, lọc theo người thực hiện (filterCode rỗng = tất cả).
  function summaryBodyHtml(filterCode, group) {
    var tasks = (state.tasks || []).filter(function (t) {
      if (filterCode && !isAssignee(t, filterCode)) return false;
-     if (group === 'dept' && t.crewTask) return false;   // 4T (Phòng) = task không thuộc crew
-     if (group === 'crew' && !t.crewTask) return false;   // Production Crew
+     if (group === 'dept' && t.crewTask) return false;
+     if (group === 'crew' && !t.crewTask) return false;
      return true;
    });
    var bks = summaryBuckets();
-   var cards = bks.map(function (bk) {
-     var n = tasks.filter(bk.fn).length;
-     return '<div class="card kpi" style="padding:14px 16px"><div class="kpi-top"><div class="kpi-icon" style="color:' + bk.color + ';width:36px;height:36px;font-size:1.1rem"><span class="glyph">' + icon3d(bk.icon, 28) + '</span></div></div><div class="kpi-val" style="color:' + bk.color + ';font-size:30px">' + n + '</div><div class="kpi-sub" style="font-size:12px">' + esc(bk.label) + '</div></div>';
-   }).join('');
-   var sections = bks.map(function (bk) {
-     var arr = tasks.filter(bk.fn).slice().sort(function (a, b) { return (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2) || (a.deadline||'').localeCompare(b.deadline||''); });
+   function sortArr(a) { return a.slice().sort(function (x, y) { return (PRIORITY_RANK[x.priority]||2)-(PRIORITY_RANK[y.priority]||2) || (x.deadline||'').localeCompare(y.deadline||''); }); }
+   // CẤP 2 — danh sách task của MỘT danh mục (bấm 1 task -> chi tiết)
+   if (_sumNav.level === 'list') {
+     var bk = bks.filter(function (x) { return x.key === _sumNav.key; })[0] || bks[0];
+     var arr = sortArr(tasks.filter(bk.fn));
      var rows = arr.length ? arr.map(function (t) {
-       return '<div class="sum-row' + (isUnclaimed(t) ? ' sum-row--unclaimed' : '') + '">' +
+       return '<div class="sum-row' + (isUnclaimed(t) ? ' sum-row--unclaimed' : '') + '" data-action="sum-task" data-code="' + esc(t.taskCode) + '" style="cursor:pointer">' +
          '<span class="tr-code mono" title="' + esc(t.taskCode) + '">' + esc(shortTaskCode(t.taskCode)) + '</span>' +
          '<div class="sum-main"><div class="sum-title">' + esc(t.title) + '</div>' +
          '<div class="sum-sub faint">' + ic('user') + ' ' + esc(assigneeNames(t)) + ' · ' + ic('pen') + ' ' + esc(creatorName(t)) + (t.deadline ? ' · ' + ic('clock') + ' ' + esc(fmtDateVN(t.deadline)) : '') + '</div></div>' +
          '<span class="pill ' + (STATUS_CLASS[t.status]||'') + '"><span class="dot"></span>' + esc(t.status) + '</span></div>';
-     }).join('') : '<div class="empty text-sm" style="padding:12px">Không có.</div>';
-     return '<div style="margin-top:16px"><div class="row row--between" style="margin-bottom:6px"><b>' + bk.icon + ' ' + esc(bk.label) + '</b><span class="faint text-sm">' + arr.length + ' việc</span></div><div class="sum-list">' + rows + '</div></div>';
+     }).join('') : '<div class="empty text-sm" style="padding:12px">Không có việc nào trong mục này.</div>';
+     return '<div class="row row--between" style="margin-bottom:10px;align-items:center">' +
+         '<button type="button" class="btn btn--ghost btn--sm" data-action="sum-back">← Danh mục</button>' +
+         '<b style="color:' + bk.color + '">' + bk.icon + ' ' + esc(bk.label) + ' (' + arr.length + ')</b></div>' +
+       '<div class="faint text-xs" style="margin-bottom:8px">Bấm vào một việc để xem chi tiết.</div>' +
+       '<div class="sum-list">' + rows + '</div>';
+   }
+   // CẤP 1 — lưới danh mục (bấm để xem danh sách)
+   var cards = bks.map(function (bk) {
+     var n = tasks.filter(bk.fn).length;
+     return '<div class="card kpi" data-action="sum-cat" data-key="' + bk.key + '" style="padding:14px 16px;cursor:pointer"><div class="kpi-top"><div class="kpi-icon" style="color:' + bk.color + ';width:36px;height:36px;font-size:1.1rem"><span class="glyph">' + icon3d(bk.icon, 28) + '</span></div></div><div class="kpi-val" style="color:' + bk.color + ';font-size:30px">' + n + '</div><div class="kpi-sub" style="font-size:12px">' + esc(bk.label) + '</div><div class="text-xs faint" style="margin-top:6px">Xem danh sách →</div></div>';
    }).join('');
-   return '<div class="grid-cards">' + cards + '</div>' + sections;
+   return '<div class="text-sm faint" style="margin-bottom:10px">Chọn một mục để theo dõi (bấm để mở danh sách, bấm tiếp vào việc để xem chi tiết):</div><div class="grid-cards">' + cards + '</div>';
  }
 
  function renderDashboard() {
@@ -1495,7 +1510,7 @@
    var mineAll = state.tasks.filter(function (t) { return !t.crewTask && isAssignee(t, u.code); });
    var s = computeStats(mineAll, state.period.type, state.period.anchor);
    var pctStr = s.totalInP > 0 ? Math.round(s.taskCompletionRate) + '%' : '—';
-   var dailyCnt = mineAll.filter(function (t) { return !t.projectId; }).length, projCnt = mineAll.filter(function (t) { return t.projectId; }).length;
+   var dailyCnt = s.dailyCount, projCnt = s.projCount;
    var cards =
      '<div class="card kpi"><div class="kpi-top"><div class="kpi-icon ico-orange"><span class="glyph">' + icon3d("📋", 32) + '</span></div></div><div class="kpi-val">' + s.completedInP + '<span class="faint" style="font-size:1.1rem">/' + s.totalInP + '</span></div><div class="kpi-sub">Task HT / Giao (trong kỳ)</div></div>' +
      '<div class="card kpi"><div class="kpi-top"><div class="kpi-icon ico-green"><span class="glyph">' + icon3d("⏱️", 32) + '</span></div></div><div class="kpi-val">' + fmtH(s.avgCycleH) + '</div><div class="kpi-sub">T/g làm TB (Start → Done)</div></div>' +
@@ -1534,11 +1549,11 @@
      var mine = state.tasks.filter(function (t) { return taskOk(t) && isAssignee(t, m.code); });
      var s = computeStats(mine, pt, pa);
      var mo = computeStats(mine, 'month', today);
-     return { m: m, total: mine.length, s: s, avgCycleH: s.avgCycleH, avgPauseH: s.avgPauseH, perMonth: mo.totalInP, pri: mo.byPriority, punc: s.punc, byStatus: s.byStatus };
+     return { m: m, total: s.totalInP, s: s, avgCycleH: s.avgCycleH, avgPauseH: s.avgPauseH, perMonth: s.completedInP, pri: mo.byPriority, punc: s.punc, byStatus: s.byStatus };
    });
 
    var roleSel = '<select id="team-role" style="max-width:210px"><option value="">— Tất cả vai trò —</option>' + roleSet.map(function (r) { return '<option value="' + esc(r) + '"' + (roleFilter === r ? ' selected' : '') + '>' + esc(ROLE_LABEL[r] || r) + '</option>'; }).join('') + '</select>';
-   var exportBtn = !isCrew ? '<button class="btn btn--success btn--sm" data-action="export-xlsx">⬇️ Xuất Excel</button>' : '';
+   var exportBtn = !isCrew ? '<button class="btn btn--success btn--sm" data-action="export-xlsx">⬇️ Xuất Excel</button>' : '<button class="btn btn--success btn--sm" data-action="export-xlsx-crew">⬇️ Xuất Excel</button>';
 
    function coll(key, title, innerFn) {
      var open = !!state.teamOpen[key];
@@ -1578,7 +1593,7 @@
          barRow(d.total, maxT, '#17479D', 'Số task', d.total) +
          barRow(d.avgCycleH, maxC, '#34c759', 'TG hoàn thành TB', fmtH(d.avgCycleH)) +
          barRow(d.avgPauseH, maxP, '#ff9500', 'TG tạm hoãn TB', fmtH(d.avgPauseH)) +
-         barRow(d.perMonth, maxM, '#EE6823', 'Task / tháng này', d.perMonth) +
+         barRow(d.perMonth, maxM, '#EE6823', 'Đã hoàn thành (kỳ)', d.perMonth) +
          '<div class="text-xs faint" style="margin-top:8px;margin-bottom:3px">Mức độ ưu tiên (tháng này)</div>' +
          '<div class="kpi-bar" style="display:flex">' + (stacked || '<div style="width:100%;background:rgba(0,0,0,0.05)"></div>') + '</div>' +
          '</div>';
@@ -2047,13 +2062,21 @@
      var cpTasks = state.tasks.filter(function (t) { return t.crewTask && t.projectId && inWorkPeriod(t.createdAt, which); });
      var byProj = {}; cpTasks.forEach(function (t) { (byProj[t.projectId] = byProj[t.projectId] || []).push(t); });
      var ids = Object.keys(byProj);
-     var head = '<div class="row row--between" style="margin-bottom:18px"><div class="faint text-sm">Task crew thuộc ' + ids.length + ' dự án</div>' +
+     var head = '<div class="row row--between" style="margin-bottom:18px"><div class="faint text-sm">Task crew thuộc ' + ids.length + ' dự án (bấm để mở/gập từng dự án)</div>' +
        (mgr ? '<button class="btn btn--primary" data-action="open-create-crew-proj">+ Giao việc crew vào dự án</button>' : '') + '</div>';
      if (!ids.length) return head + '<div class="card empty"><div class="big">🚀</div><p>Chưa có task crew nào thuộc dự án. Dự án dùng chung với Trung Tâm.</p></div>';
      var blocks = ids.map(function (id) {
        var p = state.projects.filter(function (x) { return x.id === id; })[0], nm = p ? p.name : id;
        var arr = byProj[id].sort(function (a, b) { return (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2); });
-       return '<div class="text-sm muted" style="margin:10px 0 6px;font-weight:700">' + ic('rocket') + ' ' + esc(nm) + ' <span class="mono faint text-xs">' + esc(id) + '</span></div><div class="task-list">' + arr.map(taskCard).join('') + '</div>';
+       var doneN = arr.filter(function (t) { return t.status === STATUS.DONE; }).length;
+       var open = !!(state.projFolderOpen && state.projFolderOpen[id]);
+       return '<div class="card stack" style="margin-bottom:12px;padding:12px 16px">' +
+         '<div class="row row--between" data-action="proj-folder-toggle" data-id="' + esc(id) + '" style="cursor:pointer;font-weight:700;font-size:15px">' +
+           '<span>' + (open ? '📂' : '📁') + ' ' + esc(nm) + ' <span class="mono faint text-xs">' + esc(id) + '</span></span>' +
+           '<span class="text-xs faint">' + doneN + '/' + arr.length + ' xong ' + (open ? '▲' : '▼') + '</span>' +
+         '</div>' +
+         (open ? '<div class="task-list" style="margin-top:10px">' + arr.map(taskCard).join('') + '</div>' : '') +
+       '</div>';
      }).join('');
      return head + blocks;
    }
@@ -2157,6 +2180,7 @@
 
  // Sửa ĐẦY ĐỦ thông tin 1 thành viên crew (quản lý crew) — mã/tên/chức danh/vai trò/PIN.
  function openEditCrewMember(code) {
+   if (!canManageCrew(state.user)) { toast('Bạn không có quyền sửa nhân sự Production Crew.', 'err'); return; }
    var m = state.members.filter(function (x) { return x.code === code; })[0]; if (!m) return;
    var html = '<div class="modal-head"><h2>' + ic('edit') + ' Sửa nhân sự Production Crew</h2><button class="icon-btn" data-action="close-modal">✕</button></div>' +
      '<form id="ec-form"><div class="modal-body"><div class="tag text-sm" style="margin-bottom:8px;background:rgba(255,45,85,0.12);color:#ff2d55;border-color:rgba(255,45,85,0.3)">' + ic('film') + ' Production Crew</div><div class="form-grid">' +
@@ -2378,6 +2402,7 @@
  }
 
  function openMember(code) {
+   if (!isManager(state.user)) { toast('Bạn không có quyền sửa thông tin nhân sự.', 'err'); return; }
    var m = code ? state.members.filter(function (x) { return x.code === code; })[0] : null;
    var roles = [[ROLE.STAFF, 'Chuyên viên'], [ROLE.DEPUTY, 'Phó phòng'], [ROLE.HEAD, 'Trưởng phòng'],
      [ROLE.LEAD, 'Lead Production'], [ROLE.QUAY, 'Sub-Lead Production (Quay)'], [ROLE.CHUP, 'Sub-Lead Production (Chụp)'], [ROLE.MEMBER, 'Thành viên']];
@@ -2806,6 +2831,26 @@
    } catch (e) { toast('Lỗi xuất Excel: ' + (e.message || e), 'err'); }
  }
 
+ function exportCrewToExcel() {
+   if (!canManageCrew(state.user)) return;
+   if (typeof XLSX === 'undefined') { toast('Thư viện Excel chưa tải xong, thử lại sau giây lát.', 'err'); return; }
+   try {
+     var projName = function (id) { if (!id) return ''; var p = (state.projects||[]).filter(function(x){return x.id===id;})[0]; return p ? p.name : id; };
+     var taskRows = (state.tasks||[]).filter(function (t) { return t.crewTask; }).map(function (t) {
+       return { 'Mã việc': t.taskCode, 'Tiêu đề': t.title, 'Mô tả': t.description || '', 'Người thực hiện': assigneeNames(t), 'Người giao': creatorName(t), 'Loại': t.projectId ? 'Dự án' : 'Crew', 'Dự án': projName(t.projectId), 'Độ khó': t.difficulty, 'Ưu tiên': t.priority, 'Trạng thái': t.status, 'Hạn chót': ymd(t.deadline), 'Ngày tạo': ymd(t.createdAt), 'Hoàn thành lúc': ymd(t.completedAt), 'Ghi chú': t.note || '' };
+     });
+     var memRows = (state.members||[]).filter(function (m) { return isCrewRole(m.role); }).map(function (m) {
+       return { 'Mã NV': m.code, 'Họ tên': m.name, 'Vai trò': ROLE_LABEL[m.role] || m.role, 'Chức danh': m.title || '', 'Đang hoạt động': m.active ? 'Có' : 'Không' };
+     });
+     var wb = XLSX.utils.book_new();
+     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(taskRows.length ? taskRows : [{ 'Mã việc': '(trống)' }]), 'Công việc Crew');
+     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(memRows.length ? memRows : [{ 'Mã NV': '(trống)' }]), 'Nhân sự Crew');
+     var fname = 'BaoCao_ProductionCrew_' + todayStr() + '.xlsx';
+     XLSX.writeFile(wb, fname);
+     toast('Đã xuất ' + fname, 'ok');
+   } catch (e) { toast('Lỗi xuất Excel: ' + (e.message || e), 'err'); }
+ }
+
  // ================== EVENTS ROUTER ==================
  document.addEventListener('click', function (e) {
    var node = e.target.closest('[data-action]'); var action = node ? node.getAttribute('data-action') : null;
@@ -2895,7 +2940,11 @@
        Server.completeProject(state.token, node.getAttribute('data-id')).then(refreshState).then(function(){ toast('Đã hoàn thành Dự án!', 'ok'); renderPage(); }).catch(handleErr);
      }
    }
-   else if (action === 'export-xlsx') exportToExcel();
+   else if (action === 'export-xlsx') exportToExcel(); else if (action === 'export-xlsx-crew') exportCrewToExcel();
+   else if (action === 'proj-folder-toggle') { state.projFolderOpen = state.projFolderOpen || {}; var _pid = node.getAttribute('data-id'); state.projFolderOpen[_pid] = !state.projFolderOpen[_pid]; renderPage(); }
+   else if (action === 'sum-cat') { _sumNav = { level: 'list', key: node.getAttribute('data-key') }; sumRerender(); }
+   else if (action === 'sum-back') { _sumNav = { level: 'cats', key: null }; sumRerender(); }
+   else if (action === 'sum-task') { var _sc = node.getAttribute('data-code'); closeModal(); if (_sc) openTaskDetail(_sc); }
  });
 
  function toggleKebab(btn) {
