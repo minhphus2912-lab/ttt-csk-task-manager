@@ -1,17 +1,14 @@
 # Quản lý Nhân sự & Công việc — Trung Tâm Truyền Thông - Tổ Chức Sự Kiện
 
-> ✅ **BẢN CHÍNH THỨC (mở được MỌI thiết bị / trình duyệt / Edge, không cần đăng nhập Google):**
-> ## 👉 https://minhphus2912-lab.github.io/ttt-csk-task-manager/
+> ✅ **BẢN CHÍNH THỨC (Google Apps Script — chạy trực tiếp dưới `drivetttcskdrive2025@huflit.edu.vn`):**
+> ## 👉 https://script.google.com/macros/s/AKfycbybZBCki3-Bjve2IiAPo7YGuV6f0c5WNJivAfhdDT83Q_lFPX9d-d0yZH77nF-pK1kj/exec
 >
-> Trang web tĩnh trên GitHub Pages, **dữ liệu chung nhiều người dùng thật** (kết nối trực tiếp
-> backend Google Apps Script + Google Sheet của `drivetttcskdrive2025@huflit.edu.vn` qua FetchServer).
-> Vào là chạy ngay, không phụ thuộc trạng thái đăng nhập Google của máy. **Đây là link để chia sẻ cho mọi người.**
+> Toàn màn hình, dữ liệu chung nhiều người dùng (Google Sheet của tài khoản .edu). **Đây là link chính thức để chia sẻ.**
+> Deploy bằng `clasp deploy -i <deploymentId>` (tạo version mới trên đúng deployment này).
 >
-> _Link dự phòng (chạy trực tiếp trên Google, toàn màn hình):_
-> https://script.google.com/macros/s/AKfycbybZBCki3-Bjve2IiAPo7YGuV6f0c5WNJivAfhdDT83Q_lFPX9d-d0yZH77nF-pK1kj/exec
-> ⚠️ Link `/exec` này có thể báo **"Không thể mở tệp tại thời điểm này"** trên trình duyệt đang đăng nhập
-> nhiều tài khoản Google (lỗi nền tảng của Google Apps Script). Nếu gặp lỗi: dùng link GitHub Pages ở trên,
-> hoặc mở `/exec` ở **cửa sổ ẩn danh** / đăng xuất bớt tài khoản Google.
+> ⚠️ Nếu trình duyệt báo **"Không thể mở tệp tại thời điểm này"** (xảy ra khi đang đăng nhập NHIỀU tài khoản
+> Google cùng lúc — lỗi nền tảng của Google Apps Script): mở link trong **cửa sổ ẩn danh**, hoặc đăng xuất bớt
+> tài khoản Google, hoặc thêm `?authuser=0` vào cuối link.
 
 > Đăng nhập: mã `TP01` · `PP01` · `TT01` … — PIN theo hồ sơ (mẫu `123456`), Admin `291219`.
 
