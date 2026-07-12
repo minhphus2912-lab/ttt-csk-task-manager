@@ -61,6 +61,8 @@ function setup_(withDemo) {
   ensureSheet_(ss, SH_CONFIG, ['key', 'value', 'mô tả']);
   ensureSheet_(ss, SH_CHATS, CHAT_COLS);
   ensureSheet_(ss, SH_MESSAGES, MSG_COLS);
+  ensureSheet_(ss, SH_OKR_OBJ, OKR_OBJ_COLS);
+  ensureSheet_(ss, SH_OKR_KR, OKR_KR_COLS);
 
   migrate_(); // đảm bảo sheet Tasks cũ có đủ cột mới
 
@@ -97,10 +99,13 @@ function ensureSheet_(ss, name, headers) {
 function migrate_() {
   migrateSheetCols_(SH_TASKS, TASK_COLS);
   migrateSheetCols_(SH_MEMBERS, MEMBER_COLS); // thêm cột 'grants', 'avatar' cho sheet cũ
+  migrateSheetCols_(SH_PROJECTS, PROJECT_COLS); // thêm cột 'krId' (OKR) cho sheet Projects cũ
   // Tin nhắn/chat: tạo sheet nếu chưa có (deploy cũ chưa có 2 sheet này).
   var ss = getSS_();
   ensureSheet_(ss, SH_CHATS, CHAT_COLS);
   ensureSheet_(ss, SH_MESSAGES, MSG_COLS);
+  ensureSheet_(ss, SH_OKR_OBJ, OKR_OBJ_COLS);   // OKR: tạo sheet nếu chưa có
+  ensureSheet_(ss, SH_OKR_KR, OKR_KR_COLS);
   migrateRolesAndConfig_();
   ensureAdminConfig_();   // ADMIN: credentials ở Script Property (ẨN), XOÁ khỏi sheet Members
   formatSheets_(); // mỗi lần migrate -> định dạng lại sheet cho gọn gàng
@@ -134,13 +139,14 @@ var COL_WIDTHS_ = {
   id: 142, leadCode: 96, memberCodes: 172, eventDate: 110,
   memberCode: 116, target: 82,
   key: 172, value: 240, 'mô tả': 300,
-  type: 76, chatId: 142, senderCode: 106, kind: 76, body: 320
+  type: 76, chatId: 142, senderCode: 106, kind: 76, body: 320,
+  objectiveId: 142, yearLabel: 110, semester: 82, ownerCode: 96, unit: 96, current: 82, krId: 116
 };
 // Định dạng MỌI sheet cho dễ nhìn: đóng băng + tô header, kẻ sọc xen kẽ, set bề rộng cột, clip tràn, định dạng ngày.
 // Bọc try/catch từng thao tác -> mock harness (thiếu API định dạng) vẫn chạy bình thường, GAS thật áp dụng đầy đủ.
 function formatSheets_() {
   var ss = getSS_();
-  [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG, SH_CHATS, SH_MESSAGES].forEach(function (n) {
+  [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG, SH_CHATS, SH_MESSAGES, SH_OKR_OBJ, SH_OKR_KR].forEach(function (n) {
     var sh = ss.getSheetByName(n);
     if (!sh || sh.getLastColumn() === 0) return;
     var lastCol = sh.getLastColumn();

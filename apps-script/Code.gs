@@ -34,6 +34,8 @@ var SH_KPI     = 'KpiTargets';
 var SH_CONFIG  = 'Config';
 var SH_CHATS    = 'Chats';
 var SH_MESSAGES = 'Messages';
+var SH_OKR_OBJ  = 'OKR_Objectives';   // OKR: Mục tiêu (Objective) — CHỈ Trung Tâm, không có ở Production Crew.
+var SH_OKR_KR   = 'OKR_KeyResults';   // OKR: Kết quả then chốt (Key Result)
 var CHAT_COLS = ['id', 'type', 'name', 'memberCodes', 'createdBy', 'createdAt'];
 var MSG_COLS  = ['id', 'chatId', 'senderCode', 'kind', 'body', 'createdAt'];
 
@@ -73,11 +75,15 @@ var TASK_COLS = ['taskCode', 'title', 'description', 'assigneeCode', 'difficulty
                  'startedAt', 'submittedAt', 'completedAt', 'reportLink', 'note',
                  'priority', 'pauseHours', 'lastPausedAt', 'projectId', 'crewTask',
                  'category', 'completeLink', 'phatSinh', 'batchName', 'assigneeCodes',
-                 'startDate', 'needSupport', 'supportNote'];
+                 'startDate', 'needSupport', 'supportNote', 'krId'];
 // Phần phụ công việc (Trung Tâm Truyền thông).
 var WORK_CATEGORIES = ['Admin', 'Design', 'Digital marketing', 'Facebook', 'TikTok', 'Multimedia', 'PR', 'Internal communications'];
-var PROJECT_COLS = ['id', 'name', 'leadCode', 'memberCodes', 'eventDate', 'status', 'createdAt'];
+var PROJECT_COLS = ['id', 'name', 'leadCode', 'memberCodes', 'eventDate', 'status', 'createdAt', 'krId'];
 var KPI_COLS = ['memberCode', 'target'];
+// OKR (CHỈ Trung Tâm). type: 'auto' = đếm task/project hoàn thành gắn KR; 'manual' = quản lý nhập current.
+var OKR_OBJ_COLS = ['id', 'title', 'yearLabel', 'semester', 'ownerCode', 'status', 'createdAt'];
+var OKR_KR_COLS  = ['id', 'objectiveId', 'title', 'type', 'target', 'unit', 'current', 'createdAt'];
+var OKR_SEMESTERS = ['HKI', 'HKII', 'HKIII'];
 
 var DIFFICULTY_ORDER = ['Dễ', 'Bình thường', 'Nâng cao', 'Khó'];
 var DIFFICULTY_CONFIG_KEY = {
@@ -228,6 +234,8 @@ function apiFunctions_() {
     changePassword: changePassword, setKpiTarget: setKpiTarget, setCrewRole: setCrewRole, setGrant: setGrant,
     saveAvatar: saveAvatar, upsertMember: upsertMember, deleteMember: deleteMember, addCrewMember: addCrewMember, updateCrewMember: updateCrewMember,
     sendRemindersNow: sendRemindersNow, updateMyEmail: updateMyEmail,
+    createObjective: createObjective, updateObjective: updateObjective, deleteObjective: deleteObjective,
+    createKeyResult: createKeyResult, updateKeyResult: updateKeyResult, deleteKeyResult: deleteKeyResult, setKRCurrent: setKRCurrent,
     listChats: listChats, getMessages: getMessages, sendMessage: sendMessage, createDM: createDM, createGroup: createGroup,
     renameGroup: renameGroup, addChatMembers: addChatMembers, removeChatMember: removeChatMember, deleteGroup: deleteGroup,
     aiGenerate: aiGenerate, resetToSeed: resetToSeed,
@@ -235,7 +243,7 @@ function apiFunctions_() {
   };
 }
 // [MIGRATION] Xuất/nhập TOÀN BỘ dữ liệu (kể cả pinHash) để di trú sang tài khoản/Sheet khác. CHỈ Trưởng phòng/ADMIN.
-var MIGRATE_SHEETS_ = [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG, SH_CHATS, SH_MESSAGES];
+var MIGRATE_SHEETS_ = [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG, SH_CHATS, SH_MESSAGES, SH_OKR_OBJ, SH_OKR_KR];
 function exportAllData(token) {
   var u = requireUser_(token);
   if (!isHead_(u)) throw err_('Chỉ Trưởng phòng / ADMIN mới được xuất dữ liệu.');
@@ -287,7 +295,7 @@ function getSS_() {
   return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActive();
 }
 
-var KNOWN_SHEETS = [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG, SH_CHATS, SH_MESSAGES];
+var KNOWN_SHEETS = [SH_MEMBERS, SH_TASKS, SH_PROJECTS, SH_KPI, SH_CONFIG, SH_CHATS, SH_MESSAGES, SH_OKR_OBJ, SH_OKR_KR];
 function getSheet_(name) {
   var ss = getSS_();
   var sh = ss.getSheetByName(name);
@@ -589,6 +597,7 @@ function taskObjFromRow_(row) {
       else o[c] = String(o[c]);
     });
   if (!o.projectId) o.projectId = null;
+  o.krId = String(o.krId || '').trim(); // OKR: liên kết Key Result (rỗng = không thuộc OKR)
   // NHIỀU người thực hiện: assigneeCodes lưu dạng JSON array trong 1 ô. Tương thích ngược:
   // dòng cũ chưa có cột này -> suy ra [assigneeCode]. Không cần backfill dữ liệu.
   var _ac = [];
@@ -637,12 +646,13 @@ function projObjFromRow_(row) {
     memberCodes: memberCodes,
     eventDate: cellToDateStr_(row[4], false),
     status: String(row[5] || '').trim() || PROJ_STATUS.ACTIVE,
-    createdAt: cellToDateStr_(row[6], true)
+    createdAt: cellToDateStr_(row[6], true),
+    krId: String(row[7] || '').trim()   // OKR: liên kết Key Result
   };
 }
 function projToRow_(p) {
   return [p.id, p.name, p.leadCode, JSON.stringify(p.memberCodes || []),
-          p.eventDate || '', p.status || PROJ_STATUS.ACTIVE, p.createdAt || nowIso_()];
+          p.eventDate || '', p.status || PROJ_STATUS.ACTIVE, p.createdAt || nowIso_(), p.krId || ''];
 }
 function readProjects_() {
   var sh = getSheet_(SH_PROJECTS);
@@ -671,6 +681,124 @@ function readKpiTargets_() {
 }
 
 // ---------------------------------------------------------------------------
+// OKR — Objectives + Key Results (CHỈ Trung Tâm). Quản lý (Trưởng/Phó/ADMIN) tạo/sửa; nhân viên xem + gắn task/prj vào KR.
+// ---------------------------------------------------------------------------
+function okrObjFromRow_(row) {
+  var o = {}; OKR_OBJ_COLS.forEach(function (c, i) { o[c] = (row[i] == null) ? '' : row[i]; });
+  o.id = String(o.id).trim(); o.title = String(o.title); o.yearLabel = String(o.yearLabel);
+  o.semester = String(o.semester); o.ownerCode = String(o.ownerCode); o.status = String(o.status || 'active');
+  o.createdAt = cellToDateStr_(o.createdAt, true); return o;
+}
+function okrObjToRow_(o) { return OKR_OBJ_COLS.map(function (c) { return (o[c] == null) ? '' : o[c]; }); }
+function readObjectives_() {
+  var sh = getSheet_(SH_OKR_OBJ); var v = sh.getDataRange().getValues(); var out = [];
+  for (var i = 1; i < v.length; i++) { if (String(v[i][0]).trim()) out.push(okrObjFromRow_(v[i])); }
+  return out;
+}
+function okrKrFromRow_(row) {
+  var o = {}; OKR_KR_COLS.forEach(function (c, i) { o[c] = (row[i] == null) ? '' : row[i]; });
+  o.id = String(o.id).trim(); o.objectiveId = String(o.objectiveId).trim(); o.title = String(o.title);
+  o.type = (String(o.type) === 'manual') ? 'manual' : 'auto'; o.target = Number(o.target) || 0;
+  o.unit = String(o.unit); o.current = Number(o.current) || 0; o.createdAt = cellToDateStr_(o.createdAt, true); return o;
+}
+function okrKrToRow_(o) { return OKR_KR_COLS.map(function (c) { return (o[c] == null) ? '' : o[c]; }); }
+function readKeyResults_() {
+  var sh = getSheet_(SH_OKR_KR); var v = sh.getDataRange().getValues(); var out = [];
+  for (var i = 1; i < v.length; i++) { if (String(v[i][0]).trim()) out.push(okrKrFromRow_(v[i])); }
+  return out;
+}
+function requireDeptManager_(token) {
+  var u = requireUser_(token);
+  if (!isManager_(u)) throw err_('Chỉ Trưởng phòng / Phó phòng / ADMIN mới được quản lý OKR.');
+  return u;
+}
+function _okrFindRow_(sh, id) {
+  var v = sh.getDataRange().getValues();
+  for (var i = 1; i < v.length; i++) { if (String(v[i][0]).trim() === id) return { idx: i, values: v }; }
+  return { idx: -1, values: v };
+}
+function createObjective(token, payload) {
+  var u = requireDeptManager_(token); payload = payload || {};
+  var title = String(payload.title || '').trim(); if (!title) throw err_('Vui lòng nhập tên Mục tiêu (Objective).');
+  var yearLabel = String(payload.yearLabel || '').trim(); if (!yearLabel) throw err_('Vui lòng chọn năm học.');
+  var semester = String(payload.semester || '').trim(); if (OKR_SEMESTERS.indexOf(semester) < 0) throw err_('Học kỳ không hợp lệ.');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_OKR_OBJ);
+    var obj = { id: 'OBJ-' + uuid_().substring(0, 8), title: title, yearLabel: yearLabel, semester: semester, ownerCode: u.code, status: 'active', createdAt: nowIso_() };
+    sh.appendRow(okrObjToRow_(obj)); return obj;
+  } finally { lock.releaseLock(); }
+}
+function updateObjective(token, id, payload) {
+  requireDeptManager_(token); payload = payload || {}; id = String(id || '').trim();
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_OKR_OBJ); var f = _okrFindRow_(sh, id); if (f.idx < 0) throw err_('Không tìm thấy Mục tiêu.');
+    var o = okrObjFromRow_(f.values[f.idx]);
+    if (payload.title !== undefined) o.title = String(payload.title || '').trim();
+    if (payload.yearLabel !== undefined) o.yearLabel = String(payload.yearLabel || '').trim();
+    if (payload.semester !== undefined && OKR_SEMESTERS.indexOf(String(payload.semester)) >= 0) o.semester = String(payload.semester);
+    if (payload.status !== undefined) o.status = String(payload.status || 'active');
+    var nr = okrObjToRow_(o); sh.getRange(f.idx + 1, 1, 1, nr.length).setValues([nr]); return o;
+  } finally { lock.releaseLock(); }
+}
+function deleteObjective(token, id) {
+  requireDeptManager_(token); id = String(id || '').trim();
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_OKR_OBJ); var f = _okrFindRow_(sh, id); if (f.idx >= 0) sh.deleteRow(f.idx + 1);
+    var ks = getSheet_(SH_OKR_KR); var kv = ks.getDataRange().getValues();  // cascade: xoá KR con
+    for (var j = kv.length - 1; j >= 1; j--) { if (String(kv[j][1]).trim() === id) ks.deleteRow(j + 1); }
+    return { ok: true };
+  } finally { lock.releaseLock(); }
+}
+function createKeyResult(token, payload) {
+  requireDeptManager_(token); payload = payload || {};
+  var objectiveId = String(payload.objectiveId || '').trim(); if (!objectiveId) throw err_('Thiếu Mục tiêu.');
+  if (!readObjectives_().filter(function (o) { return o.id === objectiveId; })[0]) throw err_('Mục tiêu không tồn tại.');
+  var title = String(payload.title || '').trim(); if (!title) throw err_('Vui lòng nhập tên Kết quả then chốt (KR).');
+  var type = (String(payload.type) === 'manual') ? 'manual' : 'auto';
+  var target = Number(payload.target) || 0; if (target <= 0) throw err_('Chỉ tiêu (target) phải là số lớn hơn 0.');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_OKR_KR);
+    var kr = { id: 'KR-' + uuid_().substring(0, 8), objectiveId: objectiveId, title: title, type: type, target: target, unit: String(payload.unit || '').trim(), current: Number(payload.current) || 0, createdAt: nowIso_() };
+    sh.appendRow(okrKrToRow_(kr)); return kr;
+  } finally { lock.releaseLock(); }
+}
+function updateKeyResult(token, id, payload) {
+  requireDeptManager_(token); payload = payload || {}; id = String(id || '').trim();
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_OKR_KR); var f = _okrFindRow_(sh, id); if (f.idx < 0) throw err_('Không tìm thấy KR.');
+    var o = okrKrFromRow_(f.values[f.idx]);
+    if (payload.title !== undefined) o.title = String(payload.title || '').trim();
+    if (payload.type !== undefined) o.type = (String(payload.type) === 'manual') ? 'manual' : 'auto';
+    if (payload.target !== undefined) { var tg = Number(payload.target) || 0; if (tg <= 0) throw err_('Chỉ tiêu phải lớn hơn 0.'); o.target = tg; }
+    if (payload.unit !== undefined) o.unit = String(payload.unit || '').trim();
+    if (payload.current !== undefined) o.current = Number(payload.current) || 0;
+    var nr = okrKrToRow_(o); sh.getRange(f.idx + 1, 1, 1, nr.length).setValues([nr]); return o;
+  } finally { lock.releaseLock(); }
+}
+function deleteKeyResult(token, id) {
+  requireDeptManager_(token); id = String(id || '').trim();
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_OKR_KR); var f = _okrFindRow_(sh, id); if (f.idx >= 0) sh.deleteRow(f.idx + 1);
+    return { ok: true };
+  } finally { lock.releaseLock(); }
+}
+function setKRCurrent(token, id, current) {
+  requireDeptManager_(token); id = String(id || '').trim();
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = getSheet_(SH_OKR_KR); var f = _okrFindRow_(sh, id); if (f.idx < 0) throw err_('Không tìm thấy KR.');
+    var o = okrKrFromRow_(f.values[f.idx]); o.current = Number(current) || 0;
+    var nr = okrKrToRow_(o); sh.getRange(f.idx + 1, 1, 1, nr.length).setValues([nr]); return o;
+  } finally { lock.releaseLock(); }
+}
+
+// ---------------------------------------------------------------------------
 // API: bootstrap & getState
 // ---------------------------------------------------------------------------
 /** Dữ liệu công khai cho màn hình đăng nhập (KHÔNG chứa pin). */
@@ -684,7 +812,8 @@ function readKpiTargets_() {
 // v18: thêm cột task startDate (ngày bắt đầu dự kiến) + needSupport/supportNote (yêu cầu hỗ trợ).
 // v19: tạo tài khoản ADMIN (vai trò ROLE.ADMIN, quyền cao nhất).
 // v20: ẨN ADMIN — chuyển credentials sang Script Property, XOÁ ADMIN khỏi sheet Members (không lưu pass/info ADMIN ở data storage).
-var MIG_VERSION = '20';
+// v21: OKR — thêm sheet OKR_Objectives + OKR_KeyResults; thêm cột krId cho Tasks + Projects (gắn task/prj vào KR). CHỈ Trung Tâm.
+var MIG_VERSION = '21';
 function ensureMigrated_() {
   try {
     var props = PropertiesService.getScriptProperties();
@@ -782,6 +911,17 @@ function getState(token) {
     // Toàn bộ nhân sự Phòng (mọi cấp) — CHỈ để chọn Lead / thành viên khi tạo-sửa dự án ("bất kỳ ai trong phòng").
     // Không thay đổi danh sách `members` (giữ nguyên cách ly cấp bậc cho phần giao việc).
     deptPool: allMembers.filter(function (m) { return m.active && !isCrewRole_(m.role); }).map(publicMember_),
+    // OKR CHỈ cho người có bảng Phòng (Trung Tâm). Crew thuần -> mảng rỗng (ẩn OKR).
+    // autoDone tính trên TOÀN BỘ task/prj (allTasks/allProjects, KHÔNG lọc theo quyền người xem)
+    // -> mọi người trong Phòng thấy % KR giống nhau (center-wide), tránh undercount theo scope.
+    okrObjectives: hasDeptBoard_(u.role) ? readObjectives_() : [],
+    okrKeyResults: hasDeptBoard_(u.role) ? readKeyResults_().map(function (k) {
+      if (k.type !== 'manual') {
+        k.autoDone = allTasks.filter(function (t) { return t.krId === k.id && t.status === STATUS.DONE; }).length +
+                     allProjects.filter(function (p) { return p.krId === k.id && p.status === PROJ_STATUS.COMPLETED; }).length;
+      }
+      return k;
+    }) : [],
     config: {
       departmentName: getConfigValue_('DepartmentName', 'Trung Tâm Truyền Thông - Tổ Chức Sự Kiện'),
       difficulties: difficultyList_(),
@@ -881,6 +1021,7 @@ function createTask(token, payload) {
   var batchName = String(payload.batchName || '').trim(); // "đầu việc chung" gom các việc con
   var startDate = normalizeDate_(payload.startDate); // NGÀY bắt đầu dự kiến (tùy chọn)
   if (startDate && deadline && startDate > deadline) throw err_('Ngày bắt đầu không được trễ hơn hạn cuối.');
+  var krId = crewTask ? '' : String(payload.krId || '').trim(); // OKR chỉ ở Trung Tâm -> task crew KHÔNG gắn KR
 
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -911,7 +1052,7 @@ function createTask(token, payload) {
       reportLink: '', note: note, priority: priority,
       pauseHours: 0, lastPausedAt: '', projectId: projectId || '', crewTask: crewTask,
       category: category, completeLink: '', phatSinh: phatSinh, batchName: batchName,
-      startDate: startDate, needSupport: false, supportNote: ''
+      startDate: startDate, needSupport: false, supportNote: '', krId: krId
     };
     tSheet.appendRow(taskToRow_(task));
     task.projectId = projectId || null;
@@ -1152,6 +1293,7 @@ function updateTask(token, taskCode, payload) {
       t.startDate = normalizeDate_(payload.startDate);
       if (t.startDate && t.deadline && t.startDate > t.deadline) throw err_('Ngày bắt đầu không được trễ hơn hạn cuối.');
     }
+    if (payload.krId !== undefined) t.krId = t.crewTask ? '' : String(payload.krId || '').trim(); // OKR: gắn/gỡ KR (task crew không gắn)
 
     var newRow = taskToRow_(t);
     sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
@@ -1216,7 +1358,8 @@ function createProject(token, payload) {
     var prj = {
       id: id, name: name, leadCode: leadCode,
       memberCodes: Array.isArray(payload.memberCodes) ? payload.memberCodes : [],
-      eventDate: normalizeDate_(payload.eventDate), status: PROJ_STATUS.ACTIVE, createdAt: nowIso_()
+      eventDate: normalizeDate_(payload.eventDate), status: PROJ_STATUS.ACTIVE, createdAt: nowIso_(),
+      krId: String(payload.krId || '').trim()
     };
     sh.appendRow(projToRow_(prj));
     return prj;
@@ -1250,6 +1393,7 @@ function updateProject(token, payload) {
     p.leadCode = _lm.code;
     p.memberCodes = Array.isArray(payload.memberCodes) ? payload.memberCodes : p.memberCodes;
     p.eventDate = normalizeDate_(payload.eventDate);
+    if (payload.krId !== undefined) p.krId = String(payload.krId || '').trim(); // OKR: gắn/gỡ KR
     var newRow = projToRow_(p);
     sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
     return p;

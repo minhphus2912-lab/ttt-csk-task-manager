@@ -385,7 +385,8 @@
        user: pubMem(u), tasks: tasksOut, projects: JSON.parse(JSON.stringify(projects||[])),
        members: members,
        deptPool: db.members.filter(function(m){ return m.active && !isCrewRole(m.role); }).map(pubMem),
-       config: { departmentName: db.departmentName, difficulties: diffList(db.config), statuses: STATUS_ORDER }, kpiTargets: kpi
+       config: { departmentName: db.departmentName, difficulties: diffList(db.config), statuses: STATUS_ORDER }, kpiTargets: kpi,
+       okrObjectives: hasDeptBoard(u.role) ? (db.okrObjectives || []) : [], okrKeyResults: hasDeptBoard(u.role) ? (db.okrKeyResults || []).map(function (k) { if (k.type !== 'manual') { k.autoDone = (db.tasks||[]).filter(function(t){return t.krId===k.id && t.status===STATUS.DONE;}).length + (db.projects||[]).filter(function(p){return p.krId===k.id && p.status===PROJ_STATUS.COMPLETED;}).length; } return k; }) : []
      });
    },
    createTask: function (tk, p) {
@@ -543,6 +544,13 @@
      mockSave(db); return Promise.resolve({ ok: true });
    },
    sendRemindersNow: function (tk) { return Promise.resolve({ ok: true, sent: 0 }); },
+   createObjective: function (tk, p) { var db = mockDB(); db.okrObjectives = db.okrObjectives || []; var o = { id: 'OBJ-' + Date.now(), title: p.title, yearLabel: p.yearLabel, semester: p.semester, ownerCode: (this._user(db, tk) || {}).code || '', status: 'active', createdAt: new Date().toISOString() }; db.okrObjectives.push(o); mockSave(db); return Promise.resolve(o); },
+   updateObjective: function (tk, id, p) { var db = mockDB(); (db.okrObjectives || []).forEach(function (o) { if (o.id === id) { if (p.title !== undefined) o.title = p.title; if (p.yearLabel !== undefined) o.yearLabel = p.yearLabel; if (p.semester !== undefined) o.semester = p.semester; if (p.status !== undefined) o.status = p.status; } }); mockSave(db); return Promise.resolve({ ok: true }); },
+   deleteObjective: function (tk, id) { var db = mockDB(); db.okrObjectives = (db.okrObjectives || []).filter(function (o) { return o.id !== id; }); db.okrKeyResults = (db.okrKeyResults || []).filter(function (k) { return k.objectiveId !== id; }); mockSave(db); return Promise.resolve({ ok: true }); },
+   createKeyResult: function (tk, p) { var db = mockDB(); db.okrKeyResults = db.okrKeyResults || []; var k = { id: 'KR-' + Date.now(), objectiveId: p.objectiveId, title: p.title, type: (p.type === 'manual' ? 'manual' : 'auto'), target: Number(p.target) || 0, unit: p.unit || '', current: Number(p.current) || 0, createdAt: new Date().toISOString() }; db.okrKeyResults.push(k); mockSave(db); return Promise.resolve(k); },
+   updateKeyResult: function (tk, id, p) { var db = mockDB(); (db.okrKeyResults || []).forEach(function (k) { if (k.id === id) { if (p.title !== undefined) k.title = p.title; if (p.type !== undefined) k.type = (p.type === 'manual' ? 'manual' : 'auto'); if (p.target !== undefined) k.target = Number(p.target) || 0; if (p.unit !== undefined) k.unit = p.unit; if (p.current !== undefined) k.current = Number(p.current) || 0; } }); mockSave(db); return Promise.resolve({ ok: true }); },
+   deleteKeyResult: function (tk, id) { var db = mockDB(); db.okrKeyResults = (db.okrKeyResults || []).filter(function (k) { return k.id !== id; }); mockSave(db); return Promise.resolve({ ok: true }); },
+   setKRCurrent: function (tk, id, current) { var db = mockDB(); (db.okrKeyResults || []).forEach(function (k) { if (k.id === id) k.current = Number(current) || 0; }); mockSave(db); return Promise.resolve({ ok: true }); },
    updateMyEmail: function (tk, email) { var db = mockDB(); var u = this._user(db, tk); if (u) { var m = (db.members||[]).filter(function(x){return x.code===u.code;})[0]; if (m) { m.email = String(email||'').trim(); mockSave(db); } } return Promise.resolve({ ok: true, email: String(email||'').trim() }); },
    createProject: function (tk, p) {
      var db = mockDB(); var u = this._user(db, tk);
@@ -835,6 +843,13 @@
    updateProject: function (tk, p) { return gasRun('updateProject', tk, p); },
    completeProject: function (tk, id) { return gasRun('completeProject', tk, id); },
    deleteProject: function (tk, id) { return gasRun('deleteProject', tk, id); },
+   createObjective: function (tk, p) { return gasRun('createObjective', tk, p); },
+   updateObjective: function (tk, id, p) { return gasRun('updateObjective', tk, id, p); },
+   deleteObjective: function (tk, id) { return gasRun('deleteObjective', tk, id); },
+   createKeyResult: function (tk, p) { return gasRun('createKeyResult', tk, p); },
+   updateKeyResult: function (tk, id, p) { return gasRun('updateKeyResult', tk, id, p); },
+   deleteKeyResult: function (tk, id) { return gasRun('deleteKeyResult', tk, id); },
+   setKRCurrent: function (tk, id, c) { return gasRun('setKRCurrent', tk, id, c); },
    sendRemindersNow: function (tk) { return gasRun('sendRemindersNow', tk); },
    updateMyEmail: function (tk, email) { return gasRun('updateMyEmail', tk, email); },
    changePassword: function (tk, oldPin, newPin) { return gasRun('changePassword', tk, oldPin, newPin); },
@@ -862,7 +877,7 @@
  // Backend thật qua fetch (cùng tập hàm với GasServer; mỗi method chuyển args sang apiCall).
  var FetchServer = (function () {
    var names = ['bootstrap','login','logout','getState','createTask','transitionTask','updateTaskNote',
-     'updateTask','deleteTask','setTaskDeadline','setTaskSupport','createProject','updateProject','completeProject','deleteProject','sendRemindersNow','updateMyEmail',
+     'updateTask','deleteTask','setTaskDeadline','setTaskSupport','createProject','updateProject','completeProject','deleteProject','sendRemindersNow','updateMyEmail','createObjective','updateObjective','deleteObjective','createKeyResult','updateKeyResult','deleteKeyResult','setKRCurrent',
      'changePassword','setKpiTarget','setCrewRole','setGrant','saveAvatar','upsertMember',
      'deleteMember','addCrewMember','updateCrewMember',
      'listChats','getMessages','sendMessage','createDM','createGroup','renameGroup','addChatMembers','removeChatMember','deleteGroup',
@@ -923,6 +938,7 @@
      var prevTasks = state.tasks || [];
      state.user = s.user; state.tasks = s.tasks || []; state.projects = s.projects || []; state.members = s.members || []; state.deptPool = s.deptPool || s.members || [];
      state.config = s.config; state.kpiTargets = s.kpiTargets || {};
+     state.okrObjectives = s.okrObjectives || []; state.okrKeyResults = s.okrKeyResults || [];
      maybeNotifyNewAssignments(prevTasks, state.tasks);
      return s;
    });
@@ -1098,7 +1114,8 @@
    if (hasDeptBoard(u.role)) {
      var dept = [
        { page: 'dashboard', icon: '📊', label: 'Bảng điều khiển' },
-       { page: 'work', icon: '✅', label: 'Công việc' }
+       { page: 'work', icon: '✅', label: 'Công việc' },
+       { page: 'okr', icon: '🎯', label: 'OKR' }
      ];
      if (isManager(u)) dept.push({ page: 'members', icon: '👥', label: 'Nhân sự' });
      if (isManager(u)) dept.push({ page: 'grants', icon: '🔑', label: 'Phân quyền' });
@@ -1183,6 +1200,7 @@
    if (state.page === 'grants') return isManager(state.user) ? renderGrants() : renderDashboard();
    if (state.page === 'calendar') return renderCalendar();
    if (state.page === 'chat') return renderChat();
+   if (state.page === 'okr') return hasDeptBoard(state.user.role) ? renderOKR() : renderDashboard();
    if (state.page === 'settings') return renderSettings();
    renderDashboard();
  }
@@ -2358,6 +2376,130 @@
  }
 
  // ================== SETTINGS (Đổi MK) ==================
+ // ================== OKR — Objectives & Key Results (CHỈ Trung Tâm) ==================
+ function okrCurrentYearLabel() { var y = (new Date()).getFullYear(); return y + '-' + (y + 1); }
+ function okrPeriodState() {
+   if (!state.okrPeriod) {
+     var objs = state.okrObjectives || [];
+     if (objs.length) { var o = objs[objs.length - 1]; state.okrPeriod = { yearLabel: o.yearLabel, semester: o.semester }; }
+     else state.okrPeriod = { yearLabel: okrCurrentYearLabel(), semester: 'HKI' };
+   }
+   return state.okrPeriod;
+ }
+ function okrYearOptions() {
+   var set = {}; (state.okrObjectives || []).forEach(function (o) { if (o.yearLabel) set[o.yearLabel] = 1; });
+   set[okrPeriodState().yearLabel] = 1; set[okrCurrentYearLabel()] = 1;
+   return Object.keys(set).sort();
+ }
+ function krProgress(kr) {
+   var target = Number(kr.target) || 0, done;
+   if (kr.type === 'manual') done = Number(kr.current) || 0;
+   else done = Number(kr.autoDone) || 0; // server đã đếm trên TOÀN BỘ task/prj -> mọi người xem thấy % giống nhau
+   var pct = target > 0 ? Math.round(done / target * 100) : 0;
+   return { done: done, target: target, pct: pct };
+ }
+ function okrBar(pct, color) {
+   var w = Math.min(100, Math.max(0, pct));
+   return '<div class="proj-progress" style="height:12px;border-radius:8px"><div class="fill" style="width:' + w + '%;border-radius:8px;background:' + color + '"></div></div>';
+ }
+ // Ô chọn Key Result (dùng trong form tạo/sửa task & dự án). Nhóm theo Objective.
+ function krSelectHtml(id, selectedKrId) {
+   var objs = (state.okrObjectives || []).filter(function (o) { return o.status !== 'archived'; });
+   var krs = state.okrKeyResults || [];
+   var opts = '<option value="">— Không thuộc OKR —</option>';
+   objs.forEach(function (o) {
+     var mine = krs.filter(function (k) { return k.objectiveId === o.id; });
+     if (!mine.length) return;
+     opts += '<optgroup label="' + esc(o.title) + ' [' + esc(o.yearLabel) + ' · ' + esc(o.semester) + ']">' +
+       mine.map(function (k) { return '<option value="' + esc(k.id) + '"' + (k.id === selectedKrId ? ' selected' : '') + '>' + esc(k.title) + '</option>'; }).join('') + '</optgroup>';
+   });
+   return '<div class="field"><label>🎯 Thuộc Key Result (OKR) <span class="faint" style="font-weight:400">(tùy chọn)</span></label><select id="' + id + '">' + opts + '</select></div>';
+ }
+ function renderOKR() {
+   var u = state.user, mgr = isManager(u);
+   setTitle('🎯 OKR', 'Mục tiêu & Kết quả then chốt — Trung Tâm Truyền Thông');
+   var per = okrPeriodState();
+   var years = okrYearOptions();
+   var yearSel = '<select id="okr-year">' + years.map(function (y) { return '<option value="' + esc(y) + '"' + (y === per.yearLabel ? ' selected' : '') + '>Năm học ' + esc(y) + '</option>'; }).join('') + '</select>';
+   var semTabs = '<div class="seg">' + ['HKI', 'HKII', 'HKIII'].map(function (sm) { return '<button data-action="okr-sem" data-sem="' + sm + '"' + (sm === per.semester ? ' class="is-active"' : '') + '>' + sm + '</button>'; }).join('') + '</div>';
+   var head = '<div class="row row--wrap" style="gap:14px;align-items:center;margin-bottom:20px">' + yearSel + semTabs + '<div class="spacer"></div>' + (mgr ? '<button class="btn btn--primary" data-action="okr-add-obj">+ Tạo Mục tiêu (Objective)</button>' : '') + '</div>';
+   var objs = (state.okrObjectives || []).filter(function (o) { return o.yearLabel === per.yearLabel && o.semester === per.semester; });
+   var krs = state.okrKeyResults || [];
+   if (!objs.length) { setView(head + '<div class="card empty"><div class="big">🎯</div><p>Chưa có Mục tiêu nào cho <b>' + esc(per.semester) + '</b> năm học <b>' + esc(per.yearLabel) + '</b>.</p>' + (mgr ? '<p class="text-sm muted">Bấm "Tạo Mục tiêu" để bắt đầu.</p>' : '') + '</div>'); }
+   else {
+     var cards = objs.map(function (o) {
+       var mine = krs.filter(function (k) { return k.objectiveId === o.id; });
+       var avg = mine.length ? Math.round(mine.reduce(function (a, k) { return a + krProgress(k).pct; }, 0) / mine.length) : 0;
+       var krHtml = mine.length ? mine.map(function (k) {
+         var pr = krProgress(k);
+         var color = pr.pct >= 100 ? '#16a34a' : (pr.pct >= 50 ? 'linear-gradient(90deg,#17479D,#5ac8fa)' : '#EE6823');
+         var typeBadge = k.type === 'manual' ? '<span class="tag text-xs">✍ nhập tay</span>' : '<span class="tag text-xs">🔗 tự đếm task/dự án</span>';
+         var mgrBtns = mgr ? '<div class="row" style="gap:4px">' + (k.type === 'manual' ? '<button class="btn btn--ghost btn--sm" data-action="okr-set-kr" data-id="' + esc(k.id) + '">Cập nhật số</button>' : '') + '<button class="btn btn--ghost btn--sm" data-action="okr-edit-kr" data-id="' + esc(k.id) + '">' + ic('edit') + '</button><button class="btn btn--ghost btn--sm" data-action="okr-del-kr" data-id="' + esc(k.id) + '" style="color:var(--c-danger)">' + ic('trash') + '</button></div>' : '';
+         return '<div class="card stack" style="padding:12px 14px;gap:6px' + (pr.pct >= 100 ? ';border:1px solid rgba(22,163,74,0.35)' : '') + '">' +
+           '<div class="row row--between" style="align-items:flex-start;gap:8px"><div style="min-width:0"><b>' + esc(k.title) + '</b> ' + typeBadge + '</div><b style="white-space:nowrap;color:' + (pr.pct >= 100 ? '#16a34a' : 'var(--c-secondary-active)') + '">' + pr.pct + '%' + (pr.pct > 100 ? ' <span class="pill" style="background:#16a34a;color:#fff;font-size:10px;padding:1px 6px">⭐ vượt</span>' : '') + '</b></div>' +
+           okrBar(pr.pct, color) +
+           '<div class="row row--between text-xs faint" style="align-items:center"><span>Đạt <b>' + pr.done + '</b> / ' + pr.target + (k.unit ? ' ' + esc(k.unit) : '') + '</span>' + mgrBtns + '</div>' +
+           '</div>';
+       }).join('') : '<div class="empty text-sm">Chưa có Key Result nào.</div>';
+       return '<div class="card stack" style="margin-bottom:18px;border-top:4px solid var(--c-project)">' +
+         '<div class="row row--between row--wrap" style="align-items:center;gap:10px"><div style="min-width:0"><h3 style="color:var(--c-project)">🎯 ' + esc(o.title) + '</h3><div class="text-xs faint">' + esc(o.yearLabel) + ' · ' + esc(o.semester) + ' · ' + mine.length + ' KR</div></div>' +
+         '<div class="row" style="gap:8px;align-items:center"><b style="font-size:22px;color:' + (avg >= 100 ? '#16a34a' : 'var(--c-project)') + '">' + avg + '%</b>' + (mgr ? '<button class="btn btn--secondary btn--sm" data-action="okr-add-kr" data-obj="' + esc(o.id) + '">+ KR</button><button class="btn btn--ghost btn--sm" data-action="okr-edit-obj" data-id="' + esc(o.id) + '">' + ic('edit') + '</button><button class="btn btn--ghost btn--sm" data-action="okr-del-obj" data-id="' + esc(o.id) + '" style="color:var(--c-danger)">' + ic('trash') + '</button>' : '') + '</div></div>' +
+         okrBar(avg, avg >= 100 ? '#16a34a' : 'linear-gradient(90deg,#af52de,#5ac8fa)') +
+         '<div class="stack" style="margin-top:8px">' + krHtml + '</div>' +
+         '</div>';
+     }).join('');
+     setView(head + cards);
+   }
+   var ys = el('okr-year'); if (ys) ys.addEventListener('change', function () { state.okrPeriod = { yearLabel: this.value, semester: okrPeriodState().semester }; renderPage(); });
+ }
+ function openObjectiveForm(id) {
+   var o = id ? (state.okrObjectives || []).filter(function (x) { return x.id === id; })[0] : null;
+   var per = okrPeriodState(); var years = okrYearOptions();
+   var html = '<div class="modal-head"><h2>' + (o ? 'Sửa Mục tiêu' : 'Tạo Mục tiêu (Objective)') + '</h2><button class="icon-btn" data-action="close-modal">✕</button></div>' +
+     '<form id="obj-form"><div class="modal-body">' +
+     '<div class="field"><label>Tên Mục tiêu (Objective) *</label><input id="o-title" required placeholder="VD: Trở thành kênh truyền thông SV yêu thích" value="' + esc(o ? o.title : '') + '"></div>' +
+     '<div class="form-grid"><div class="field"><label>Năm học *</label><input id="o-year" required list="okr-year-list" value="' + esc(o ? o.yearLabel : per.yearLabel) + '" placeholder="VD: 2026-2027"><datalist id="okr-year-list">' + okrYearOptions().map(function (y) { return '<option value="' + esc(y) + '">'; }).join('') + '</datalist></div>' +
+     '<div class="field"><label>Học kỳ *</label><select id="o-sem">' + ['HKI', 'HKII', 'HKIII'].map(function (sm) { return '<option value="' + sm + '"' + ((o ? o.semester : per.semester) === sm ? ' selected' : '') + '>' + sm + '</option>'; }).join('') + '</select></div></div>' +
+     '</div><div class="modal-foot"><button type="button" class="btn btn--ghost" data-action="close-modal">Hủy</button><button type="submit" class="btn btn--primary" id="obj-submit">' + (o ? 'Lưu' : 'Tạo') + '</button></div></form>';
+   openModal(html);
+   $('#obj-form').addEventListener('submit', function (ev) {
+     ev.preventDefault(); var b = el('obj-submit'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
+     var payload = { title: el('o-title').value.trim(), yearLabel: el('o-year').value, semester: el('o-sem').value };
+     var pr = o ? Server.updateObjective(state.token, o.id, payload) : Server.createObjective(state.token, payload);
+     pr.then(function (r) { if (!o && r && r.yearLabel) state.okrPeriod = { yearLabel: r.yearLabel, semester: r.semester }; return refreshState(); }).then(function () { closeModal(); toast('Đã lưu Mục tiêu.', 'ok'); renderPage(); }).catch(function (e) { b.disabled = false; b.textContent = (o ? 'Lưu' : 'Tạo'); handleErr(e); });
+   });
+ }
+ function openKRForm(id, objId) {
+   var k = id ? (state.okrKeyResults || []).filter(function (x) { return x.id === id; })[0] : null;
+   var oid = k ? k.objectiveId : objId;
+   var html = '<div class="modal-head"><h2>' + (k ? 'Sửa Key Result' : 'Thêm Key Result (KR)') + '</h2><button class="icon-btn" data-action="close-modal">✕</button></div>' +
+     '<form id="kr-form"><div class="modal-body">' +
+     '<div class="field"><label>Tên Kết quả then chốt (KR) *</label><input id="k-title" required placeholder="VD: Hoàn thành 20 video đúng hạn" value="' + esc(k ? k.title : '') + '"></div>' +
+     '<div class="field"><label>Cách đo *</label><select id="k-type"><option value="auto"' + (!k || k.type === 'auto' ? ' selected' : '') + '>🔗 Tự đếm task/dự án hoàn thành</option><option value="manual"' + (k && k.type === 'manual' ? ' selected' : '') + '>✍ Nhập tay (followers, view, doanh thu...)</option></select></div>' +
+     '<div class="form-grid"><div class="field"><label>Chỉ tiêu (target) *</label><input id="k-target" type="number" min="1" step="any" required value="' + esc(k ? k.target : '') + '" placeholder="VD: 20"></div>' +
+     '<div class="field"><label>Đơn vị <span class="faint" style="font-weight:400">(tùy chọn)</span></label><input id="k-unit" value="' + esc(k ? k.unit : '') + '" placeholder="VD: video, followers"></div></div>' +
+     '<div class="text-xs faint">"Tự đếm": % = số task/dự án <b>Hoàn thành</b> gắn KR này ÷ chỉ tiêu. "Nhập tay": quản lý tự cập nhật con số đạt được.</div>' +
+     '</div><div class="modal-foot"><button type="button" class="btn btn--ghost" data-action="close-modal">Hủy</button><button type="submit" class="btn btn--primary" id="kr-submit">' + (k ? 'Lưu' : 'Thêm') + '</button></div></form>';
+   openModal(html);
+   $('#kr-form').addEventListener('submit', function (ev) {
+     ev.preventDefault(); var b = el('kr-submit'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
+     var payload = { objectiveId: oid, title: el('k-title').value.trim(), type: el('k-type').value, target: Number(el('k-target').value), unit: el('k-unit').value.trim() };
+     var pr = k ? Server.updateKeyResult(state.token, k.id, payload) : Server.createKeyResult(state.token, payload);
+     pr.then(refreshState).then(function () { closeModal(); toast('Đã lưu Key Result.', 'ok'); renderPage(); }).catch(function (e) { b.disabled = false; b.textContent = (k ? 'Lưu' : 'Thêm'); handleErr(e); });
+   });
+ }
+ function openKRValue(id) {
+   var k = (state.okrKeyResults || []).filter(function (x) { return x.id === id; })[0]; if (!k) return;
+   var html = '<div class="modal-head"><h2>Cập nhật số hiện tại</h2><button class="icon-btn" data-action="close-modal">✕</button></div>' +
+     '<form id="krv-form"><div class="modal-body"><div class="text-sm muted" style="margin-bottom:8px">KR: <b>' + esc(k.title) + '</b> — chỉ tiêu <b>' + esc(k.target) + '</b>' + (k.unit ? ' ' + esc(k.unit) : '') + '</div>' +
+     '<div class="field"><label>Số hiện tại đạt được</label><input id="krv" type="number" step="any" value="' + esc(k.current || 0) + '"></div>' +
+     '</div><div class="modal-foot"><button type="button" class="btn btn--ghost" data-action="close-modal">Hủy</button><button type="submit" class="btn btn--primary" id="krv-submit">Lưu</button></div></form>';
+   openModal(html);
+   $('#krv-form').addEventListener('submit', function (ev) {
+     ev.preventDefault(); var b = el('krv-submit'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
+     Server.setKRCurrent(state.token, k.id, Number(el('krv').value) || 0).then(refreshState).then(function () { closeModal(); toast('Đã cập nhật.', 'ok'); renderPage(); }).catch(function (e) { b.disabled = false; b.textContent = 'Lưu'; handleErr(e); });
+   });
+ }
  function renderSettings() {
    setTitle('Cài đặt', 'Quản lý bảo mật tài khoản cá nhân');
    setView(
@@ -2556,6 +2698,7 @@
          return '<label class="checkbox-item"><input type="checkbox" name="p-members" value="'+esc(m.code)+'" '+isChecked+'> '+esc(m.name)+'</label>'; 
      }).join('') + '</div>' +
      '</div>' +
+     krSelectHtml('p-kr', p ? (p.krId || '') : '') +
      '</div><div class="modal-foot"><button type="button" class="btn btn--ghost" data-action="close-modal">Hủy</button><button type="submit" class="btn btn--primary" id="proj-submit">' + submitText + '</button></div></form>';
    openModal(html);
    
@@ -2563,7 +2706,7 @@
      ev.preventDefault();
      var members = []; document.querySelectorAll('input[name="p-members"]:checked').forEach(function(cb){members.push(cb.value);});
      var b = el('proj-submit'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
-     var payload = { name: el('p-name').value, leadCode: el('p-lead').value, memberCodes: members, eventDate: el('p-date').value };
+     var payload = { name: el('p-name').value, leadCode: el('p-lead').value, memberCodes: members, eventDate: el('p-date').value, krId: (el('p-kr') ? el('p-kr').value : '') };
 
      if (p) {
          payload.id = p.id;
@@ -2620,6 +2763,7 @@
      '<div class="field"><label>Hạn cuối (Deadline)' + (prjEvent ? ' <span class="faint" style="font-weight:400">(≤ ' + esc(fmtDateVN(prjEvent)) + ')</span>' : '') + '</label><input id="t-deadline" type="date"' + (prjEvent ? ' max="' + esc(prjEvent) + '"' : '') + '></div>' +
      (!crew ? '<div class="field"><label>Phần phụ công việc</label><select id="t-category"><option value="">— Chọn phần phụ —</option>' + WORK_CATEGORIES.map(function(c){return '<option value="'+esc(c)+'">'+esc(c)+'</option>';}).join('') + '</select></div>' : '') +
      '</div>' +
+     ((!crew && !pickProj) ? krSelectHtml('t-kr', '') : '') +
      ((projId || pickProj) ? '<div class="field full"><label class="checkbox-item" style="cursor:pointer"><input type="checkbox" id="t-phatsinh"> ' + ic('bolt') + ' Phát sinh (công việc ngoài kế hoạch của dự án)</label></div>' : '') +
      (!lockSelf ? '<div class="field full"><label>' + ic('puzzle') + ' Đầu việc chung (nhãn nhóm — tùy chọn)</label><input id="t-batchname" placeholder="VD: Sản xuất bộ ảnh sự kiện — các việc con sẽ gắn cùng nhãn này"></div>' +
        '<div class="field full"><label>Tách thành nhiều việc con (mỗi DÒNG = 1 việc con, độc lập; để TRỐNG nếu chỉ tạo 1 việc)</label><textarea id="t-batch-titles" placeholder="Ví dụ:&#10;Viết kịch bản&#10;Quay phim&#10;Dựng video" style="min-height:72px"></textarea><div class="text-xs faint" style="margin-top:4px">Mỗi việc con có mã/trạng thái riêng. Có thể để trống người thực hiện ở trên để các việc con là "Chưa đăng ký" cho mọi người tự nhận.</div></div>' : '') +
@@ -2660,7 +2804,7 @@
    $('#create-form').addEventListener('submit', function (ev) {
      ev.preventDefault(); var b = el('create-submit'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
      var asgCodes = el('t-assignee-self') ? [el('t-assignee-self').value] : Array.prototype.map.call(document.querySelectorAll('#t-assignee-multi .t-asg:checked'), function(c){return c.value;});
-     var base = { description: el('t-desc').value, assigneeCodes: asgCodes, difficulty: el('t-diff').value, priority: el('t-priority').value, startDate: (el('t-startdate')?el('t-startdate').value:''), deadline: el('t-deadline').value, note: el('t-note')?el('t-note').value:'', projectId: el('t-projId').value || null, crewTask: !!(el('t-crew') && el('t-crew').value), category: (el('t-category')?el('t-category').value:''), phatSinh: !!(el('t-phatsinh') && el('t-phatsinh').checked) };
+     var base = { description: el('t-desc').value, assigneeCodes: asgCodes, difficulty: el('t-diff').value, priority: el('t-priority').value, startDate: (el('t-startdate')?el('t-startdate').value:''), deadline: el('t-deadline').value, note: el('t-note')?el('t-note').value:'', projectId: el('t-projId').value || null, crewTask: !!(el('t-crew') && el('t-crew').value), category: (el('t-category')?el('t-category').value:''), phatSinh: !!(el('t-phatsinh') && el('t-phatsinh').checked), krId: (el('t-kr') ? el('t-kr').value : '') };
      var batchName = el('t-batchname') ? el('t-batchname').value.trim() : '';
      var titlesRaw = el('t-batch-titles') ? el('t-batch-titles').value.trim() : '';
      var titles = titlesRaw ? titlesRaw.split('\n').map(function(s){return s.trim();}).filter(Boolean) : [];
@@ -2712,6 +2856,7 @@
      (!t.crewTask ? '<div class="field"><label>Phần phụ công việc</label><select id="e-category"><option value="">— Chọn phần phụ —</option>' + WORK_CATEGORIES.map(function(c){return '<option value="'+esc(c)+'"'+(c===t.category?' selected':'')+'>'+esc(c)+'</option>';}).join('') + '</select></div>' : '') +
      '</div>' +
      (t.projectId ? '<div class="field full"><label class="checkbox-item" style="cursor:pointer"><input type="checkbox" id="e-phatsinh"' + (t.phatSinh ? ' checked' : '') + '> ' + ic('bolt') + ' Phát sinh (ngoài kế hoạch)</label></div>' : '') +
+     (!t.crewTask ? krSelectHtml('e-kr', t.krId || '') : '') +
      '<div class="field full"><label>Ghi chú</label><textarea id="e-note" style="min-height:60px">' + esc(t.note || '') + '</textarea></div>' +
      '</div><div class="modal-foot"><button type="button" class="btn btn--ghost" data-action="close-modal">Hủy</button><button type="submit" class="btn btn--primary" id="edit-submit">Lưu thay đổi</button></div></form>';
    openModal(html, true);
@@ -2719,7 +2864,7 @@
    $('#edit-form').addEventListener('submit', function (ev) {
      ev.preventDefault(); var b = el('edit-submit'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
      var eCodes = Array.prototype.map.call(document.querySelectorAll('#e-assignee-multi .e-asg:checked'), function(c){return c.value;});
-     Server.updateTask(state.token, code, { title: el('e-title').value, description: el('e-desc').value, assigneeCodes: eCodes, difficulty: el('e-diff').value, priority: el('e-priority').value, startDate: (el('e-startdate')?el('e-startdate').value:''), deadline: el('e-deadline').value, note: el('e-note').value, category: (el('e-category')?el('e-category').value:(t.category||'')), phatSinh: !!(el('e-phatsinh') && el('e-phatsinh').checked) })
+     Server.updateTask(state.token, code, { title: el('e-title').value, description: el('e-desc').value, assigneeCodes: eCodes, difficulty: el('e-diff').value, priority: el('e-priority').value, startDate: (el('e-startdate')?el('e-startdate').value:''), deadline: el('e-deadline').value, note: el('e-note').value, category: (el('e-category')?el('e-category').value:(t.category||'')), phatSinh: !!(el('e-phatsinh') && el('e-phatsinh').checked), krId: (el('e-kr') ? el('e-kr').value : '') })
        .then(refreshState).then(function () { closeModal(); toast('Đã cập nhật task.', 'ok'); renderPage(); })
        .catch(function (e) { b.disabled = false; b.textContent = 'Lưu thay đổi'; handleErr(e); });
    });
@@ -3027,6 +3172,14 @@
    else if (action === 'close-modal') closeModal();
    else if (action === 'view-project') { state.selectedProjectId = node.getAttribute('data-id'); if ((node.getAttribute('data-silo') || 'dept') === 'crew') { state.page = 'crew'; state.crewTab = 'work'; state.crewWorkTab = 'projects'; } else { state.page = 'work'; state.workTab = 'projects'; } renderPage(); }
    else if (action === 'open-create-project') openProjectForm(null);
+   else if (action === 'okr-sem') { state.okrPeriod = { yearLabel: okrPeriodState().yearLabel, semester: node.getAttribute('data-sem') }; renderPage(); }
+   else if (action === 'okr-add-obj') openObjectiveForm(null);
+   else if (action === 'okr-edit-obj') openObjectiveForm(node.getAttribute('data-id'));
+   else if (action === 'okr-del-obj') { if (confirm('Xoá Mục tiêu này và TOÀN BỘ Key Result con? (task/dự án đã gắn sẽ được gỡ liên kết, không bị xoá)')) { Server.deleteObjective(state.token, node.getAttribute('data-id')).then(refreshState).then(function(){ toast('Đã xoá Mục tiêu.', 'ok'); renderPage(); }).catch(handleErr); } }
+   else if (action === 'okr-add-kr') openKRForm(null, node.getAttribute('data-obj'));
+   else if (action === 'okr-edit-kr') openKRForm(node.getAttribute('data-id'), null);
+   else if (action === 'okr-del-kr') { if (confirm('Xoá Key Result này?')) { Server.deleteKeyResult(state.token, node.getAttribute('data-id')).then(refreshState).then(function(){ toast('Đã xoá KR.', 'ok'); renderPage(); }).catch(handleErr); } }
+   else if (action === 'okr-set-kr') openKRValue(node.getAttribute('data-id'));
    else if (action === 'task-menu') { e.stopPropagation(); toggleKebab(node); }
    else if (action === 'project-menu') { e.stopPropagation(); toggleKebab(node); }
    else if (action === 'edit-task') { e.stopPropagation(); openEditTask(node.getAttribute('data-code')); }
