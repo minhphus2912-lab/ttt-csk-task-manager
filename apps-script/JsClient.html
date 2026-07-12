@@ -1850,18 +1850,45 @@
    setView(html);
  }
 
- function renderProjectDetail(id) {
+ function projAssignGroups(tasks) {
+   if (!tasks.length) return '<div class="empty text-sm">Chưa có task nào.</div>';
+   var byPri = function(a,b){ return (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2) || (a.deadline||'').localeCompare(b.deadline||''); };
+   var groups = {}, gorder = [];
+   tasks.forEach(function(t){ var ks = isUnclaimed(t) ? ['__unclaimed'] : assigneesOf(t); ks.forEach(function(k){ if (!groups[k]) { groups[k] = []; gorder.push(k); } groups[k].push(t); }); });
+   gorder.sort(function(a,b){ var na = a==='__unclaimed'?'zzz':String(memberName(a)); var nb = b==='__unclaimed'?'zzz':String(memberName(b)); return na.localeCompare(nb, 'vi'); });
+   return gorder.map(function(k){
+     var arr = groups[k].slice().sort(byPri);
+     var dn = arr.filter(function(t){ return t.status===STATUS.DONE; }).length;
+     var who = (k==='__unclaimed') ? '' + ic('pin') + ' Chưa đăng ký' : '' + ic('user') + ' ' + esc(memberName(k));
+     var rows = arr.map(function(t){
+       return '<tr data-action="open-task-detail" data-code="'+esc(t.taskCode)+'" style="cursor:pointer">' +
+         '<td class="mono text-xs">'+esc(t.taskCode)+'</td>' +
+         '<td style="min-width:240px"><b class="clamp2">'+esc(t.title)+'</b>'+(t.phatSinh?' <span class="tag" style="font-size:10px;padding:1px 6px;background:rgba(255,149,0,0.15);color:#c05600;border-color:rgba(255,149,0,0.35)">' + ic('bolt') + ' PS</span>':'')+'</td>' +
+         '<td><span class="pri '+(PRIORITY_CLASS[t.priority]||'')+'" style="font-size:11px">'+esc(t.priority)+'</span></td>' +
+         '<td class="text-xs">'+esc(t.difficulty)+'</td>' +
+         '<td class="text-xs">'+(t.deadline?esc(fmtDateVN(t.deadline)):'—')+'</td>' +
+         '<td><span class="pill '+(STATUS_CLASS[t.status]||'')+'" style="font-size:11px"><span class="dot"></span>'+esc(t.status)+'</span></td></tr>';
+     }).join('');
+     return '<div style="margin-top:14px"><div class="row row--between" style="margin-bottom:6px"><b>'+who+'</b><span class="faint text-xs">'+dn+'/'+arr.length+' xong</span></div>' +
+       '<div class="table-wrap"><table><thead><tr><th>Mã</th><th>Công việc</th><th>Ưu tiên</th><th>Độ khó</th><th>Hạn</th><th>Trạng thái</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+   }).join('');
+ }
+ function renderProjectDetail(id, silo) {
+   silo = silo || 'dept';
+   var isCrewProj = silo === 'crew';
    var p = state.projects.filter(function(x){return x.id === id;})[0];
-   if (!p) { state.selectedProjectId = null; return renderWork(); }
-   var mgr = isManager(state.user);
+   if (!p) { state.selectedProjectId = null; return isCrewProj ? renderWork('crew') : renderWork(); }
+   var mgr = isCrewProj ? canManageCrew(state.user) : isManager(state.user);
    // Chuyên viên là Lead/thành viên của dự án này cũng được TỰ thêm việc cho mình vào dự án.
    var meCode = state.user.code;
    var isPrjMember = (p.leadCode === meCode) || (p.memberCodes || []).indexOf(meCode) >= 0;
-   var canAddTask = (mgr || (deptScopeOf(state.user.role) === 'own' && isPrjMember)) && p.status !== PROJ_STATUS.COMPLETED;
+   var canAddTask = (isCrewProj ? canManageCrew(state.user) : (mgr || (deptScopeOf(state.user.role) === 'own' && isPrjMember))) && p.status !== PROJ_STATUS.COMPLETED;
 
-   setTitle('Dự án: ' + p.name, p.id + ' • Lead: ' + memberName(p.leadCode));
+   setTitle((isCrewProj ? '🎬 Dự án (Crew): ' : 'Dự án: ') + p.name, p.id + ' • Lead: ' + memberName(p.leadCode));
    
-   var pTasks = state.tasks.filter(function(t){return t.projectId === p.id;});
+   var allPTasks = state.tasks.filter(function(t){return t.projectId === p.id;});
+   var pTasks = allPTasks.filter(function(t){ return isCrewProj ? t.crewTask : !t.crewTask; });
+   var crewObserve = allPTasks.filter(function(t){ return t.crewTask; });
    var doneTasks = pTasks.filter(function(t){return t.status === STATUS.DONE;});
    var totalT = pTasks.length;
    var doneT = doneTasks.length;
@@ -1871,11 +1898,12 @@
    var runningCodes = [];
    pTasks.forEach(function(t){ if(t.status === STATUS.RUNNING) assigneesOf(t).forEach(function(c){ if(canSeeMember(c) && runningCodes.indexOf(c)<0) runningCodes.push(c); }); });
    
-   var html = '<button class="btn btn--ghost btn--sm" data-action="nav" data-page="work" style="margin-bottom:16px">← Quay lại danh sách dự án</button>';
+   var _backBtn = isCrewProj ? '<button class="btn btn--ghost btn--sm" data-action="nav" data-page="crew" data-tab="work" style="margin-bottom:16px">← Quay lại danh sách dự án</button>' : '<button class="btn btn--ghost btn--sm" data-action="nav" data-page="work" style="margin-bottom:16px">← Quay lại danh sách dự án</button>';
+   var html = _backBtn;
    
    // Top Stats
    var headerBtns = '';
-   if (canManageProject(p) && p.status !== PROJ_STATUS.COMPLETED) {
+   if (!isCrewProj && canManageProject(p) && p.status !== PROJ_STATUS.COMPLETED) {
      headerBtns = '<div class="row row--wrap"><button class="btn btn--ghost btn--sm" data-action="edit-project" data-id="'+esc(p.id)+'">' + ic('edit') + ' Sửa</button><button class="btn btn--success btn--sm" data-action="complete-project" data-id="'+esc(p.id)+'">Đánh dấu Hoàn thành</button><button class="btn btn--ghost btn--sm" data-action="delete-project" data-id="'+esc(p.id)+'" style="color:var(--c-danger)">' + ic('trash') + ' Xoá dự án</button></div>';
    }
 
@@ -1896,7 +1924,7 @@
 
    // Bảng Liệt kê chi tiết phân công
    var taskHtml = '<div class="card stack"><div class="row row--between"><h3>Bảng phân công chi tiết</h3>' +
-     (canAddTask ? '<button class="btn btn--primary btn--sm" data-action="open-create" data-proj="'+esc(p.id)+'">+ ' + (mgr ? 'Giao việc' : 'Thêm việc của tôi') + '</button>' : '') + '</div>';
+     (canAddTask ? '<button class="btn btn--primary btn--sm" data-action="' + (isCrewProj ? 'open-create-crew' : 'open-create') + '" data-proj="'+esc(p.id)+'">+ ' + (mgr ? 'Giao việc' : 'Thêm việc của tôi') + '</button>' : '') + '</div>';
    
    if (!pTasks.length) taskHtml += '<div class="empty text-sm">Chưa có task nào trong dự án này.</div>';
    else {
@@ -1933,7 +1961,7 @@
    } else {
      var memberStats = {};
      // CHỈ thống kê những thành viên viewer được phép thấy (ẩn người cấp cao / khác silo).
-     p.memberCodes.forEach(function(c){ if (canSeeMember(c)) memberStats[c] = { assigned:0, done:0 }; });
+     (isCrewProj ? [] : (p.memberCodes || [])).forEach(function(c){ if (canSeeMember(c)) memberStats[c] = { assigned:0, done:0 }; });
      pTasks.forEach(function(t) {
        assigneesOf(t).forEach(function(c) {           // task nhiều người -> tính cho TỪNG người thực hiện
          if(!canSeeMember(c)) return;
@@ -1958,6 +1986,12 @@
      membersKpiHtml +
      '</tbody></table></div></div>';
 
+   if (!isCrewProj && canViewCrew(state.user)) {
+     html += '<div class="card stack" style="border:1px solid rgba(255,45,85,0.2);background:rgba(255,45,85,0.04)"><div class="row row--between"><h3>🎬 Task của Production Crew (quan sát)</h3><span class="faint text-xs">' + crewObserve.filter(function(t){return t.status===STATUS.DONE;}).length + '/' + crewObserve.length + ' xong</span></div>' +
+       '<p class="text-sm muted">Phần việc Production Crew phụ trách trong dự án này (chỉ để theo dõi).</p>' +
+       (crewObserve.length ? projAssignGroups(crewObserve) : '<div class="empty text-sm">Chưa có task Production Crew trong dự án này.</div>') +
+       '</div>';
+   }
    html += '</div>';
    setView(html);
  }
@@ -2026,16 +2060,18 @@
  }
 
  // Thẻ 1 dự án (dùng ở mục Dự án).
- function projectCard(p) {
+ function projectCard(p, silo) {
+   silo = silo || 'dept';
+   var isCrewCard = silo === 'crew';
    var mgr = isManager(state.user);
-   var pTasks = state.tasks.filter(function(t){return t.projectId === p.id;});
+   var pTasks = state.tasks.filter(function(t){return t.projectId === p.id && (isCrewCard ? t.crewTask : !t.crewTask);});
    var doneTasks = pTasks.filter(function(t){return t.status === STATUS.DONE;});
    var pct = pTasks.length > 0 ? Math.round((doneTasks.length / pTasks.length) * 100) : 0;
-   var editBtn = canManageProject(p) ? kebabMenu({ menuAction: 'project-menu', entries: [
+   var editBtn = (!isCrewCard && canManageProject(p)) ? kebabMenu({ menuAction: 'project-menu', entries: [
        { action: 'edit-project', id: p.id, code: '', label: '' + ic('edit') + ' Sửa dự án' },
        { action: 'delete-project', id: p.id, code: '', label: '' + ic('trash') + ' Xoá dự án', danger: true }
      ] }) : '';
-   return '<div class="card stack" style="cursor:pointer;border-top: 4px solid '+ (p.status===PROJ_STATUS.COMPLETED?'var(--c-success)':'var(--c-project)') +'" data-action="view-project" data-id="'+esc(p.id)+'">' +
+   return '<div class="card stack" style="cursor:pointer;border-top: 4px solid '+ (p.status===PROJ_STATUS.COMPLETED?'var(--c-success)':(isCrewCard?'#ff2d55':'var(--c-project)')) +'" data-action="view-project" data-id="'+esc(p.id)+'" data-silo="'+silo+'">' +
      '<div class="row row--between"><span class="tag tag--project mono text-xs">' + esc(p.id) + '</span>' +
      '<div class="row" style="gap:4px">' + (p.status === PROJ_STATUS.COMPLETED ? '<span class="pill pill--done"><span class="dot"></span>Hoàn thành</span>' : '<span class="pill" style="background:rgba(175,82,222,0.1);color:#af52de"><span class="dot"></span>Đang chạy</span>') + editBtn + '</div></div>' +
      '<h3 style="font-size:20px; margin:4px 0">' + esc(p.name) + '</h3>' +
@@ -2114,33 +2150,18 @@
  }
  function workProjectsBody(isCrew, mgr, which) {
    if (isCrew) {
-     // Dự án của Crew = task crew GẮN vào dự án (liên kết dự án Trung Tâm), gom theo dự án.
-     var cpTasks = state.tasks.filter(function (t) { return t.crewTask && t.projectId && inWorkPeriod(t.createdAt, which); });
-     var byProj = {}; cpTasks.forEach(function (t) { (byProj[t.projectId] = byProj[t.projectId] || []).push(t); });
-     var ids = Object.keys(byProj);
-     var head = '<div class="row row--between" style="margin-bottom:18px"><div class="faint text-sm">Task crew thuộc ' + ids.length + ' dự án (bấm để mở/gập từng dự án)</div>' +
+     // Dự án của Crew = layout GIỐNG Trung Tâm (thẻ dự án -> chi tiết), CHỈ hiện task crew.
+     var cprojs = state.projects.filter(function (p) { return inWorkPeriod(p.createdAt, which); });
+     var chead = '<div class="row row--between" style="margin-bottom:18px"><div class="faint text-sm">Có ' + cprojs.length + ' dự án trong kỳ (bấm để xem task crew của dự án)</div>' +
        (mgr ? '<button class="btn btn--primary" data-action="open-create-crew-proj">+ Giao việc crew vào dự án</button>' : '') + '</div>';
-     if (!ids.length) return head + '<div class="card empty"><div class="big">🚀</div><p>Chưa có task crew nào thuộc dự án. Dự án dùng chung với Trung Tâm.</p></div>';
-     var blocks = ids.map(function (id) {
-       var p = state.projects.filter(function (x) { return x.id === id; })[0], nm = p ? p.name : id;
-       var arr = byProj[id].sort(function (a, b) { return (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2); });
-       var doneN = arr.filter(function (t) { return t.status === STATUS.DONE; }).length;
-       var open = !!(state.projFolderOpen && state.projFolderOpen[id]);
-       return '<div class="card stack" style="margin-bottom:12px;padding:12px 16px">' +
-         '<div class="row row--between" data-action="proj-folder-toggle" data-id="' + esc(id) + '" style="cursor:pointer;font-weight:700;font-size:15px">' +
-           '<span>' + (open ? '📂' : '📁') + ' ' + esc(nm) + ' <span class="mono faint text-xs">' + esc(id) + '</span></span>' +
-           '<span class="text-xs faint">' + doneN + '/' + arr.length + ' xong ' + (open ? '▲' : '▼') + '</span>' +
-         '</div>' +
-         (open ? '<div class="task-list" style="margin-top:10px">' + arr.map(taskCard).join('') + '</div>' : '') +
-       '</div>';
-     }).join('');
-     return head + blocks;
+     if (!cprojs.length) return chead + '<div class="card empty"><div class="big">🚀</div><p>Chưa có dự án nào trong kỳ. Dự án dùng chung với Trung Tâm.</p></div>';
+     return chead + '<div class="grid-cards">' + cprojs.map(function (p) { return projectCard(p, 'crew'); }).join('') + '</div>';
    }
    var projs = state.projects.filter(function (p) { return inWorkPeriod(p.createdAt, which); });
    var html = '<div class="row row--between" style="margin-bottom:18px"><div class="faint text-sm">Có ' + projs.length + ' dự án trong kỳ</div>' +
      (hasDeptBoard(state.user.role) ? '<button class="btn btn--primary" data-action="open-create-project">+ Tạo Dự án mới</button>' : '') + '</div>';
    if (!projs.length) return html + '<div class="card empty"><div class="big">🚀</div><p>Chưa có dự án nào trong kỳ này.</p></div>';
-   return html + '<div class="grid-cards">' + projs.map(projectCard).join('') + '</div>';
+   return html + '<div class="grid-cards">' + projs.map(function (p) { return projectCard(p, 'dept'); }).join('') + '</div>';
  }
 
  // ================== PRODUCTION CREW ==================
@@ -2172,7 +2193,7 @@
  function renderCrew() {
    var u = state.user, crewMgr = canManageCrew(u);
    var tab = state.crewTab || 'dashboard';
-   if (tab === 'work') return renderWork('crew');
+   if (tab === 'work') return (state.crewWorkTab === 'projects' && state.selectedProjectId) ? renderProjectDetail(state.selectedProjectId, 'crew') : renderWork('crew');
    if (tab === 'dashboard') {
      if (crewMgr) { setTitle('🎬 Production Crew — Bảng điều khiển', 'Thống kê theo từng thành viên crew · daily + dự án'); return renderTeamDashboard('crew'); }
      // Dashboard CÁ NHÂN cho thành viên crew.
@@ -2974,7 +2995,7 @@
    else if (action === 'force-status') { var _fcode = node.getAttribute('data-code'); if (el('sum-body')) { _sumNav = { level: 'force', key: _sumNav.key, code: _fcode }; sumRerender(); } else openForceStatus(_fcode); }
    else if (action === 'do-force') { var _fc = node.getAttribute('data-code'), _fs = node.getAttribute('data-status'); closeModal(); doTransition(_fc, 'force', _fs); }
    else if (action === 'open-create') openCreateTask(node.getAttribute('data-proj'));
-   else if (action === 'open-create-crew') openCreateTask(null, true);
+   else if (action === 'open-create-crew') openCreateTask(node.getAttribute('data-proj') || null, true);
    else if (action === 'crew-tab') { state.crewTab = node.getAttribute('data-tab'); renderPage(); }
    else if (action === 'open-crew-role') openCrewRole();
    else if (action === 'add-crew-member') openAddCrewMember();
@@ -2991,7 +3012,7 @@
    else if (action === 'open-avatar') openAvatarModal();
    else if (action === 'widget-expand') openDashWidgetFull(node.getAttribute('data-widget'));
    else if (action === 'close-modal') closeModal();
-   else if (action === 'view-project') { state.page = 'work'; state.workTab = 'projects'; state.selectedProjectId = node.getAttribute('data-id'); renderPage(); }
+   else if (action === 'view-project') { state.selectedProjectId = node.getAttribute('data-id'); if ((node.getAttribute('data-silo') || 'dept') === 'crew') { state.page = 'crew'; state.crewTab = 'work'; state.crewWorkTab = 'projects'; } else { state.page = 'work'; state.workTab = 'projects'; } renderPage(); }
    else if (action === 'open-create-project') openProjectForm(null);
    else if (action === 'task-menu') { e.stopPropagation(); toggleKebab(node); }
    else if (action === 'project-menu') { e.stopPropagation(); toggleKebab(node); }
