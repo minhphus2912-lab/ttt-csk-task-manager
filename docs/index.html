@@ -2158,6 +2158,21 @@ thead th{ background: rgba(255,255,255,0.34); }
    });
    var bks = summaryBuckets();
    function sortArr(a) { return a.slice().sort(function (x, y) { return (PRIORITY_RANK[x.priority]||2)-(PRIORITY_RANK[y.priority]||2) || (x.deadline||'').localeCompare(y.deadline||''); }); }
+   // CẤP force — ÉP đổi trạng thái NGAY trong bảng (không mở popup mới -> không nháy)
+   if (_sumNav.level === 'force') {
+     var tf = (state.tasks||[]).filter(function(x){return x.taskCode===_sumNav.code;})[0];
+     if (tf && canForceStatus(tf)) {
+       var fopts = STATUS_ORDER.map(function(s){ return '<button type="button" class="btn '+(s===tf.status?'btn--primary':'btn--ghost')+' btn--sm" data-action="sum-force-set" data-code="'+esc(tf.taskCode)+'" data-status="'+esc(s)+'">'+esc(s)+'</button>'; }).join(' ');
+       return '<div class="row row--between" style="margin-bottom:10px;align-items:center">' +
+           '<button type="button" class="btn btn--ghost btn--sm" data-action="sum-back">← Chi tiết</button>' +
+           '<span class="pill '+(STATUS_CLASS[tf.status]||'')+'"><span class="dot"></span>'+esc(tf.status)+'</span></div>' +
+         '<h3 style="margin:2px 0 6px">⚙️ Ép đổi trạng thái</h3>' +
+         '<div class="text-sm muted" style="margin-bottom:10px">'+esc(tf.title)+'<br>Người thực hiện: <b>'+esc(assigneeNames(tf))+'</b></div>' +
+         '<div class="text-sm faint" style="margin-bottom:10px">Chọn trạng thái mới (bỏ qua quy trình tuần tự):</div>' +
+         '<div class="row row--wrap" style="gap:8px">'+fopts+'</div>';
+     }
+     _sumNav.level = 'detail';
+   }
    // CẤP 3 — chi tiết task + ĐẨY TRẠNG THÁI, có nút quay lại cửa sổ thông báo
    if (_sumNav.level === 'detail') {
      var t3 = (state.tasks||[]).filter(function(x){return x.taskCode===_sumNav.code;})[0];
@@ -2208,6 +2223,16 @@ thead th{ background: rgba(255,255,255,0.34); }
    return '<div class="text-sm faint" style="margin-bottom:10px">Chọn một mục để theo dõi (bấm để mở danh sách, bấm tiếp vào việc để xem chi tiết):</div><div class="grid-cards">' + cards + '</div>';
  }
 
+ function summaryDashCard(group) {
+   group = group || '';
+   var bks = summaryBuckets();
+   var tasks = (state.tasks || []).filter(function (t) { if (group === 'dept' && t.crewTask) return false; if (group === 'crew' && !t.crewTask) return false; return true; });
+   var cards = bks.map(function (bk) {
+     var n = tasks.filter(bk.fn).length;
+     return '<div class="card kpi" data-action="open-summary-cat" data-key="' + bk.key + '" data-group="' + group + '" style="padding:12px 14px;cursor:pointer"><div class="kpi-top"><div class="kpi-icon" style="color:' + bk.color + ';width:32px;height:32px;font-size:1rem"><span class="glyph">' + icon3d(bk.icon, 24) + '</span></div></div><div class="kpi-val" style="color:' + bk.color + ';font-size:26px">' + n + '</div><div class="kpi-sub" style="font-size:12px">' + esc(bk.label) + '</div></div>';
+   }).join('');
+   return '<div class="card stack" style="margin-bottom:24px"><div class="row row--between" style="align-items:center"><h3>🔔 Tổng hợp & Thông báo</h3><button class="btn btn--ghost btn--sm" data-action="open-summary" data-group="' + group + '">Mở bảng đầy đủ →</button></div><div class="text-sm faint" style="margin-bottom:4px">Bấm một mục để xem danh sách việc cần chú ý (bấm tiếp vào việc để xem chi tiết & đổi trạng thái).</div><div class="grid-cards">' + cards + '</div></div>';
+ }
  function renderDashboard() {
    if (isManager(state.user)) return renderTeamDashboard('dept');
    // Dashboard CÁ NHÂN (chuyên viên / thành viên): task daily + dự án của mình.
@@ -2233,6 +2258,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      '</div>';
    setView('<div class="row row--wrap" style="margin-bottom:24px">' + periodControl() + '</div>' +
      '<div class="grid-cards" style="margin-bottom:24px">' + cards + '</div>' +
+     summaryDashCard() +
      '<div class="grid-dashboard"><div class="stack">' + barsHtml + '</div><div class="stack">' + renderRecentTasks(mineAll) + '</div></div>');
  }
 
@@ -2310,7 +2336,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    var who = isCrew ? 'thành viên crew' : 'nhân sự';
    var head = '<div class="row row--wrap" style="margin-bottom:14px;gap:12px;align-items:center">' + periodControl() + '<div class="spacer"></div>' + roleSel + exportBtn + '</div>';
    var empty = data.length ? '' : '<div class="card empty"><div class="big">👥</div><p>Chưa có ' + who + '.</p></div>';
-   setView(head + empty + metricGrid + detail);
+   setView(head + summaryDashCard(silo) + empty + metricGrid + detail);
    var rs = el('team-role'); if (rs) rs.addEventListener('change', function () { state.teamFilter[fkey] = this.value; renderPage(); });
    var dgrid = el('dash-grid'); applyDashLayout(dgrid); wireDashDnD(dgrid);
    requestAnimationFrame(function () { if (typeof Chart !== 'undefined') drawTeamCharts(data); });
@@ -3621,7 +3647,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    else if (action === 'task-support') openTaskSupport(node.getAttribute('data-code'));
    else if (action === 'open-task-detail') openTaskDetail(node.getAttribute('data-code'));
    else if (action === 'task-claim') doTransition(node.getAttribute('data-code'), 'claim');
-   else if (action === 'force-status') openForceStatus(node.getAttribute('data-code'));
+   else if (action === 'force-status') { var _fcode = node.getAttribute('data-code'); if (el('sum-body')) { _sumNav = { level: 'force', key: _sumNav.key, code: _fcode }; sumRerender(); } else openForceStatus(_fcode); }
    else if (action === 'do-force') { var _fc = node.getAttribute('data-code'), _fs = node.getAttribute('data-status'); closeModal(); doTransition(_fc, 'force', _fs); }
    else if (action === 'open-create') openCreateTask(node.getAttribute('data-proj'));
    else if (action === 'open-create-crew') openCreateTask(null, true);
@@ -3658,8 +3684,11 @@ thead th{ background: rgba(255,255,255,0.34); }
    else if (action === 'send-reminders') { var _b = node; _b.disabled = true; var _t = _b.textContent; _b.textContent = 'Đang gửi…'; Server.sendRemindersNow(state.token).then(function (r) { toast('Đã gửi ' + (r && r.sent || 0) + ' email nhắc việc.', 'ok'); }).catch(handleErr).then(function(){ _b.disabled = false; _b.textContent = _t; }); }
    else if (action === 'proj-folder-toggle') { state.projFolderOpen = state.projFolderOpen || {}; var _pid = node.getAttribute('data-id'); state.projFolderOpen[_pid] = !state.projFolderOpen[_pid]; renderPage(); }
    else if (action === 'sum-cat') { _sumNav = { level: 'list', key: node.getAttribute('data-key') }; sumRerender(); }
-   else if (action === 'sum-back') { if (_sumNav.level === 'detail') { _sumNav = { level: 'list', key: _sumNav.key, code: null }; } else { _sumNav = { level: 'cats', key: null, code: null }; } sumRerender(); }
+   else if (action === 'sum-back') { if (_sumNav.level === 'force') { _sumNav = { level: 'detail', key: _sumNav.key, code: _sumNav.code }; } else if (_sumNav.level === 'detail') { _sumNav = { level: 'list', key: _sumNav.key, code: null }; } else { _sumNav = { level: 'cats', key: null, code: null }; } sumRerender(); }
    else if (action === 'sum-task') { _sumNav = { level: 'detail', key: _sumNav.key, code: node.getAttribute('data-code') }; sumRerender(); }
+   else if (action === 'sum-force-set') { doTransition(node.getAttribute('data-code'), 'force', node.getAttribute('data-status')); }
+   else if (action === 'open-summary') { openSummaryModal(); var _g = node.getAttribute('data-group'); if (_g && el('sum-group')) el('sum-group').value = _g; sumRerender(); }
+   else if (action === 'open-summary-cat') { openSummaryModal(); var _g2 = node.getAttribute('data-group'); if (_g2 && el('sum-group')) el('sum-group').value = _g2; _sumNav = { level: 'list', key: node.getAttribute('data-key'), code: null }; sumRerender(); }
  });
 
  function toggleKebab(btn) {
@@ -3923,7 +3952,7 @@ thead th{ background: rgba(255,255,255,0.34); }
          toast(msg[act] || 'Cập nhật thành công', 'ok');
        }
        renderPage();
-       if (_fromSum) { if (!el('sum-body')) openSummaryModal(); _sumNav = { level: 'detail', key: _sumNav.key, code: code }; sumRerender(); }
+       if (_fromSum) { var _sk = _sumNav.key; if (!el('sum-body')) openSummaryModal(); _sumNav = { level: 'detail', key: _sk, code: code }; sumRerender(); }
      }).catch(handleErr);
  }
 
