@@ -789,6 +789,8 @@ thead th{ background: rgba(255,255,255,0.34); }
  var DIFF_CLASS = { 'Dễ': 'diff--easy', 'Bình thường': 'diff--normal', 'Nâng cao': 'diff--high', 'Khó': 'diff--hard' };
  var PRIORITY_ORDER = ['Thấp', 'Bình thường', 'Cao', 'Khẩn cấp'];
  var PRIORITY_RANK = { 'Khẩn cấp': 0, 'Cao': 1, 'Bình thường': 2, 'Thấp': 3 };
+ var WORK_SORT_RANK = {}; WORK_SORT_RANK[STATUS.RUNNING] = 0; WORK_SORT_RANK[STATUS.PENDING] = 0; WORK_SORT_RANK[STATUS.SENT] = 0; WORK_SORT_RANK[STATUS.TODO] = 1; WORK_SORT_RANK[STATUS.DONE] = 2;
+ function workStatusRank(t) { var r = WORK_SORT_RANK[t && t.status]; return (r == null) ? 1 : r; } // Đang làm(0) -> Chưa làm(1) -> Hoàn thành(2)
  var PRIORITY_CLASS = { 'Thấp': 'pri--low', 'Bình thường': 'pri--normal', 'Cao': 'pri--high', 'Khẩn cấp': 'pri--urgent' };
  var PROJ_STATUS = { ACTIVE: 'Đang thực hiện', COMPLETED: 'Đã hoàn thành' };
  // Phần phụ công việc (Trung Tâm Truyền thông) — KHÔNG áp dụng cho task Production Crew.
@@ -2812,7 +2814,7 @@ thead th{ background: rgba(255,255,255,0.34); }
      if (mgr && f.assignee && !isAssignee(t, f.assignee)) return false;
      if (f.q && !(t.title||'').toLowerCase().includes(f.q.toLowerCase()) && !(t.taskCode||'').toLowerCase().includes(f.q.toLowerCase())) return false;
      return true;
-   }).sort(function (a, b) { return (isUnclaimed(b)?1:0)-(isUnclaimed(a)?1:0) || (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2) || (b.createdAt||'').localeCompare(a.createdAt||''); });
+   }).sort(function (a, b) { return workStatusRank(a)-workStatusRank(b) || (isUnclaimed(b)?1:0)-(isUnclaimed(a)?1:0) || (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2) || (b.createdAt||'').localeCompare(a.createdAt||''); });
    var createBtn = (mgr || canSelf) ? '<button class="btn btn--primary" data-action="' + (isCrew ? 'open-create-crew' : 'open-create') + '">+ ' + (mgr ? (isCrew ? 'Giao việc crew' : 'Giao việc daily') : 'Thêm việc của tôi') + '</button>' : '';
    var toolbar = '<div class="card" style="padding:16px 24px;margin-bottom:24px"><div class="row row--wrap" style="gap:12px">' +
      '<div class="row" style="gap:6px"><input id="f-q" placeholder="Tìm tên/mã..." value="' + esc(f.q) + '" style="max-width:200px"><button class="btn btn--secondary btn--sm" id="f-search-btn">Tìm</button>' + (f.q?'<button class="icon-btn" id="f-clear-btn">✕</button>':'') + '</div>' +
