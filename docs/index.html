@@ -2541,7 +2541,7 @@ thead th{ background: rgba(255,255,255,0.34); }
 
  function projAssignGroups(tasks) {
    if (!tasks.length) return '<div class="empty text-sm">Chưa có task nào.</div>';
-   var byPri = function(a,b){ return (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2) || (a.deadline||'').localeCompare(b.deadline||''); };
+   var byPri = function(a,b){ return workStatusRank(a)-workStatusRank(b) || (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2) || (a.deadline||'').localeCompare(b.deadline||''); };
    var groups = {}, gorder = [];
    tasks.forEach(function(t){ var ks = isUnclaimed(t) ? ['__unclaimed'] : assigneesOf(t); ks.forEach(function(k){ if (!groups[k]) { groups[k] = []; gorder.push(k); } groups[k].push(t); }); });
    gorder.sort(function(a,b){ var na = a==='__unclaimed'?'zzz':String(memberName(a)); var nb = b==='__unclaimed'?'zzz':String(memberName(b)); return na.localeCompare(nb, 'vi'); });
@@ -2618,7 +2618,7 @@ thead th{ background: rgba(255,255,255,0.34); }
    if (!pTasks.length) taskHtml += '<div class="empty text-sm">Chưa có task nào trong dự án này.</div>';
    else {
      // Tự động GOM theo Người thực hiện; mỗi nhóm là 1 bảng đầy đủ cột.
-     var byPri = function(a,b){ return (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2) || (a.deadline||'').localeCompare(b.deadline||''); };
+     var byPri = function(a,b){ return workStatusRank(a)-workStatusRank(b) || (PRIORITY_RANK[a.priority]||2)-(PRIORITY_RANK[b.priority]||2) || (a.deadline||'').localeCompare(b.deadline||''); };
      var groups = {}, gorder = [];
      pTasks.forEach(function(t){ var ks = isUnclaimed(t) ? ['__unclaimed'] : assigneesOf(t); ks.forEach(function(k){ if (!groups[k]) { groups[k] = []; gorder.push(k); } groups[k].push(t); }); });
      gorder.sort(function(a,b){ var na = a==='__unclaimed'?'zzz':String(memberName(a)); var nb = b==='__unclaimed'?'zzz':String(memberName(b)); return na.localeCompare(nb, 'vi'); });
