@@ -1634,7 +1634,7 @@
      chartCard('count', '📊 Số lượng công việc', 'teamCountChart', 'Mỗi người: tổng việc · phần đã hoàn thành') +
      chartCard('cycle', '' + ic('stopwatch') + ' TG hoàn thành TB', 'teamCycleChart', 'Bắt đầu → Hoàn thành, mỗi người 1 cột') +
      chartCard('pause', '' + ic('pause') + ' TG tạm hoãn TB', 'teamPauseChart', 'Trung bình mỗi người') +
-     chartCard('punc', '🎯 Đúng / trễ / sớm', 'teamPuncChart', 'Tỉ lệ chung ' + (isCrew ? 'cả crew' : 'cả phòng')) +
+     chartCard('punc', '🎯 Đúng / trễ / sớm', 'teamPuncChart', 'Theo TỪNG người — ' + (isCrew ? 'crew' : 'phòng') + ' (đỏ = trễ)') +
      '</div>';
 
    var maxT=1, maxC=1, maxP=1, maxM=1;
@@ -1644,14 +1644,21 @@
      var barCards = data.map(function (d) {
        var tot = PRIORITY_ORDER.reduce(function (a, p) { return a + (d.pri[p] || 0); }, 0) || 1;
        var stacked = PRIORITY_ORDER.map(function (p) { var w = (d.pri[p] || 0) / tot * 100; return w > 0 ? '<div style="height:100%;width:' + w + '%;background:' + PRI_COLOR[p] + '" title="' + p + ': ' + (d.pri[p] || 0) + '"></div>' : ''; }).join('');
-       return '<div class="card stack" style="padding:16px 18px">' +
-         '<div class="row row--between" data-action="person-tasks" data-code="' + esc(d.m.code) + '" style="cursor:pointer" title="Bấm xem việc đang chạy"><b style="color:var(--c-secondary-active)">' + esc(d.m.name) + '</b><span class="role-badge ' + (ROLE_CLASS[d.m.role] || '') + '">' + esc(ROLE_LABEL[d.m.role] || d.m.role) + '</span></div>' +
+       var pc = d.punc || { som: 0, dung: 0, tre: 0 };
+       var pcTot = (pc.som + pc.dung + pc.tre) || 1;
+       var pcStacked = [['dung', '#17479D', 'Đúng hạn'], ['tre', '#dc2626', 'Trễ'], ['som', '#16a34a', 'Sớm']].map(function (x) { var v = pc[x[0]] || 0; var w = v / pcTot * 100; return w > 0 ? '<div style="height:100%;width:' + w + '%;background:' + x[1] + '" title="' + x[2] + ': ' + v + '"></div>' : ''; }).join('');
+       var lateFlag = pc.tre > 0 ? '<span class="pill" style="background:#dc2626;color:#fff;font-size:11px;padding:2px 8px"><span class="dot" style="background:#fff"></span>⚠ ' + pc.tre + ' trễ</span>' : '';
+       return '<div class="card stack" style="padding:16px 18px' + (pc.tre > 0 ? ';border:1px solid rgba(220,38,38,0.35)' : '') + '">' +
+         '<div class="row row--between" data-action="person-tasks" data-code="' + esc(d.m.code) + '" style="cursor:pointer" title="Bấm xem việc đang chạy"><div class="row" style="gap:6px;align-items:center;min-width:0;flex-wrap:wrap"><b style="color:var(--c-secondary-active)">' + esc(d.m.name) + '</b>' + lateFlag + '</div><span class="role-badge ' + (ROLE_CLASS[d.m.role] || '') + '">' + esc(ROLE_LABEL[d.m.role] || d.m.role) + '</span></div>' +
          barRow(d.total, maxT, '#17479D', 'Số task', d.total) +
          barRow(d.avgCycleH, maxC, '#34c759', 'TG hoàn thành TB', fmtH(d.avgCycleH)) +
          barRow(d.avgPauseH, maxP, '#ff9500', 'TG tạm hoãn TB', fmtH(d.avgPauseH)) +
          barRow(d.perMonth, maxM, '#EE6823', 'Đã hoàn thành (kỳ)', d.perMonth) +
          '<div class="text-xs faint" style="margin-top:8px;margin-bottom:3px">Mức độ ưu tiên (tháng này)</div>' +
          '<div class="kpi-bar" style="display:flex">' + (stacked || '<div style="width:100%;background:rgba(0,0,0,0.05)"></div>') + '</div>' +
+         '<div class="text-xs faint" style="margin-top:8px;margin-bottom:3px">Đúng / Trễ / Sớm hạn (kỳ)</div>' +
+         '<div class="kpi-bar" style="display:flex">' + (pcStacked || '<div style="width:100%;background:rgba(0,0,0,0.05)"></div>') + '</div>' +
+         '<div class="row row--wrap text-xs" style="gap:12px;margin-top:5px"><span style="color:#17479D">● Đúng: <b>' + pc.dung + '</b></span><span style="color:#dc2626">● Trễ: <b>' + pc.tre + '</b></span><span style="color:#16a34a">● Sớm: <b>' + pc.som + '</b></span></div>' +
          '</div>';
      }).join('');
      return legend + '<div class="grid-cards">' + (barCards || '<div class="empty text-sm">Chưa có nhân sự.</div>') + '</div>';
@@ -1784,9 +1791,13 @@
    }
    var c3 = el('teamPuncChart');
    if (c3) {
-     var som = 0, dung = 0, tre = 0; data.forEach(function (d) { som += d.punc.som; dung += d.punc.dung; tre += d.punc.tre; });
-     if (!(som + dung + tre)) c3.parentElement.innerHTML = '<div class="empty faint" style="padding-top:30px">Chưa có việc hoàn thành để tính đúng/trễ/sớm.</div>';
-     else chartInstances.teamPunc = new Chart(c3, { type: 'doughnut', data: { labels: ['Sớm (' + som + ')', 'Đúng hạn (' + dung + ')', 'Trễ (' + tre + ')'], datasets: [{ data: [som, dung, tre], backgroundColor: ['#34c759', '#17479D', '#ff3b30'], borderWidth: 2, borderColor: '#fff' }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '58%', plugins: { legend: { position: 'bottom', labels: { usePointStyle: true } } } } });
+     var pl = data.filter(function (d) { return (d.punc.som + d.punc.dung + d.punc.tre) > 0; });
+     if (!pl.length) c3.parentElement.innerHTML = '<div class="empty faint" style="padding-top:30px">Chưa có việc hoàn thành để tính đúng/trễ/sớm.</div>';
+     else chartInstances.teamPunc = new Chart(c3, { type: 'bar', data: { labels: pl.map(function (d) { return d.m.name; }), datasets: [
+       { label: 'Đúng hạn', data: pl.map(function (d) { return d.punc.dung; }), backgroundColor: '#17479D', borderRadius: 4, stack: 'p' },
+       { label: 'Trễ', data: pl.map(function (d) { return d.punc.tre; }), backgroundColor: '#ff3b30', borderRadius: 4, stack: 'p' },
+       { label: 'Sớm', data: pl.map(function (d) { return d.punc.som; }), backgroundColor: '#34c759', borderRadius: 4, stack: 'p' }
+     ] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8, font: { size: 11 } } }, tooltip: { callbacks: { label: function (ctx) { return ctx.dataset.label + ': ' + ctx.parsed.y; } } } }, scales: { x: { stacked: true, ticks: { autoSkip: false, maxRotation: 60 } }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } } } });
    }
  }
  function drawShareChart(data) {
