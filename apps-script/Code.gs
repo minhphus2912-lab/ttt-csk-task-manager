@@ -192,6 +192,20 @@ function sendRemindersNow(token) {
   var u = requireManager_(token);
   return { ok: true, sent: sendTaskReminders_() };
 }
+// CHẠY 1 LẦN TRONG TRÌNH SOẠN THẢO (Run) để CẤP QUYỀN gửi email (script.send_mail) cho tài khoản chủ,
+// đồng thời gửi 1 email TEST tới nhân sự MM01 (Đường Minh Phú). Sau khi chạy + duyệt quyền, chức năng
+// nhắc việc tự động & nút "Gửi nhắc việc ngay" sẽ hoạt động.
+function testEmail() {
+  var list = readMembers_().filter(function (x) { return String(x.code).toUpperCase() === 'MM01' && x.email; });
+  if (!list.length) throw new Error('MM01 chưa có email trong hồ sơ nhân sự.');
+  var to = list[0].email;
+  MailApp.sendEmail(to, '[TEST] Nhắc việc — Hệ thống Quản lý công việc TTT-CSK',
+    'Xin chào ' + (list[0].name || '') + ',\n\n' +
+    'Đây là email TEST từ Hệ thống Quản lý Nhân sự & Công việc (TTT-CSK).\n' +
+    'Nếu bạn nhận được email này, chức năng gửi email nhắc việc đã hoạt động bình thường.\n\n' +
+    'Bạn có thể bỏ qua email này.');
+  return 'Đã gửi email TEST tới ' + to;
+}
 // Người dùng tự cập nhật EMAIL của CHÍNH MÌNH (nhận nhắc việc). Mọi vai trò; ADMIN ẩn -> bỏ qua.
 function updateMyEmail(token, email) {
   var u = requireUser_(token);
