@@ -1,15 +1,19 @@
 # Quản lý Nhân sự & Công việc — Trung Tâm Truyền Thông - Tổ Chức Sự Kiện
 
-> ✅ **BẢN CHÍNH THỨC (toàn màn hình, sạch):** https://script.google.com/macros/s/AKfycbybZBCki3-Bjve2IiAPo7YGuV6f0c5WNJivAfhdDT83Q_lFPX9d-d0yZH77nF-pK1kj/exec
+> ✅ **BẢN CHÍNH THỨC (mở được MỌI thiết bị / trình duyệt / Edge, không cần đăng nhập Google):**
+> ## 👉 https://minhphus2912-lab.github.io/ttt-csk-task-manager/
 >
-> Web app Google Apps Script chạy trực tiếp dưới tài khoản `drivetttcskdrive2025@huflit.edu.vn` (dữ liệu
-> trên Google Sheet của tài khoản này). Giao diện toàn màn hình, không khung phụ. Bản chạy chính thức cho nhiều người dùng.
+> Trang web tĩnh trên GitHub Pages, **dữ liệu chung nhiều người dùng thật** (kết nối trực tiếp
+> backend Google Apps Script + Google Sheet của `drivetttcskdrive2025@huflit.edu.vn` qua FetchServer).
+> Vào là chạy ngay, không phụ thuộc trạng thái đăng nhập Google của máy. **Đây là link để chia sẻ cho mọi người.**
 >
-> _Tùy chọn — link có huflit.edu.vn (nhúng qua Google Site):_ https://sites.google.com/huflit.edu.vn/quanly-tttt-tcsk/trang-chủ
+> _Link dự phòng (chạy trực tiếp trên Google, toàn màn hình):_
+> https://script.google.com/macros/s/AKfycbybZBCki3-Bjve2IiAPo7YGuV6f0c5WNJivAfhdDT83Q_lFPX9d-d0yZH77nF-pK1kj/exec
+> ⚠️ Link `/exec` này có thể báo **"Không thể mở tệp tại thời điểm này"** trên trình duyệt đang đăng nhập
+> nhiều tài khoản Google (lỗi nền tảng của Google Apps Script). Nếu gặp lỗi: dùng link GitHub Pages ở trên,
+> hoặc mở `/exec` ở **cửa sổ ẩn danh** / đăng xuất bớt tài khoản Google.
 
-> 🔗 **Bản demo (GitHub Pages):** https://minhphus2912-lab.github.io/comms-task-manager/
-> Đăng nhập demo: mã `TP01` · `PP01` · `TT01` … — PIN `123456`.
-> ⚠️ Đây là **bản demo chạy độc lập**: dữ liệu chỉ lưu trong trình duyệt của bạn (localStorage), **không đồng bộ nhiều người**, trợ lý AI tắt. Bản chạy thật (nhiều người dùng, dữ liệu chung) được triển khai trên **Google Apps Script + Google Sheets** — xem mục "Triển khai" bên dưới.
+> Đăng nhập: mã `TP01` · `PP01` · `TT01` … — PIN theo hồ sơ (mẫu `123456`), Admin `291219`.
 
 Web app quản lý công việc nội bộ cho Trung Tâm Truyền Thông - Tổ Chức Sự Kiện. Chạy bằng
 **Google Apps Script (Web App)** + lưu dữ liệu trên **Google Sheets**, có thể nhúng vào
