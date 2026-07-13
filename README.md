@@ -1,14 +1,17 @@
 # Quản lý Nhân sự & Công việc — Trung Tâm Truyền Thông - Tổ Chức Sự Kiện
 
-> ✅ **BẢN CHÍNH THỨC (Google Apps Script — chạy trực tiếp dưới `drivetttcskdrive2025@huflit.edu.vn`):**
-> ## 👉 https://script.google.com/macros/s/AKfycbybZBCki3-Bjve2IiAPo7YGuV6f0c5WNJivAfhdDT83Q_lFPX9d-d0yZH77nF-pK1kj/exec
+> ✅ **BẢN CHÍNH THỨC (account-agnostic — mở MỌI thiết bị/trình duyệt, KHÔNG cần đăng nhập Google):**
+> ## 👉 https://tt-ttsk.github.io/
 >
-> Toàn màn hình, dữ liệu chung nhiều người dùng (Google Sheet của tài khoản .edu). **Đây là link chính thức để chia sẻ.**
-> Deploy bằng `clasp deploy -i <deploymentId>` (tạo version mới trên đúng deployment này).
+> Trang tĩnh trên GitHub Pages (tài khoản GitHub `TT-TTSK` đăng ký bằng mail huflit). **Không dùng đăng nhập
+> Google để mở** → không dính lỗi "không thể mở tệp" / kẹt nhiều tài khoản Google. Dữ liệu chung nhiều người
+> dùng thật (kết nối trực tiếp backend Google Apps Script + Google Sheet `drivetttcskdrive2025@huflit.edu.vn`
+> qua FetchServer). **Đây là link để chia sẻ cho mọi người.**
+> Cập nhật app: copy `docs/index.html` → `index.html` ở repo `TT-TTSK/TT-TTSK.github.io` rồi push (backend không đổi).
 >
-> ⚠️ Nếu trình duyệt báo **"Không thể mở tệp tại thời điểm này"** (xảy ra khi đang đăng nhập NHIỀU tài khoản
-> Google cùng lúc — lỗi nền tảng của Google Apps Script): mở link trong **cửa sổ ẩn danh**, hoặc đăng xuất bớt
-> tài khoản Google, hoặc thêm `?authuser=0` vào cuối link.
+> _Link dự phòng (chạy trực tiếp trên Google, có thể kẹt nhiều tài khoản):_
+> https://script.google.com/macros/s/AKfycbybZBCki3-Bjve2IiAPo7YGuV6f0c5WNJivAfhdDT83Q_lFPX9d-d0yZH77nF-pK1kj/exec
+> (nếu báo "Không thể mở tệp tại thời điểm này": thêm `?authuser=0` hoặc mở ẩn danh). Deploy backend: `clasp deploy -i <deploymentId>`.
 
 > Đăng nhập: mã `TP01` · `PP01` · `TT01` … — PIN theo hồ sơ (mẫu `123456`), Admin `291219`.
 
