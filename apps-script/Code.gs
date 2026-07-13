@@ -148,6 +148,25 @@ function setMemberEmail_(sh, rowNum, email) {
 }
 function remLi_(t) { return '<li style="margin:4px 0"><b>' + remEsc_(t.title) + '</b> · hạn ' + remFmtDate_(t.deadline) + ' · ' + remEsc_(t.priority || '') + ' · <span style="color:#888">' + remEsc_(t.status) + '</span></li>'; }
 function remSec_(title, arr, color, liFn) { return arr.length ? '<h3 style="color:' + color + ';margin:14px 0 4px">' + title + ' (' + arr.length + ')</h3><ul style="margin:0;padding-left:18px">' + arr.map(liFn || remLi_).join('') + '</ul>' : ''; }
+// Gửi email theo DANH SÁCH mã nhân sự (chỉ người active + email hợp lệ). Bọc try/catch — KHÔNG làm hỏng thao tác gọi. Trả số email gửi.
+function notifyByEmail_(codes, subject, htmlBody) {
+  var sent = 0;
+  try {
+    var want = {}; (codes || []).forEach(function (c) { c = String(c || '').trim().toUpperCase(); if (c) want[c] = 1; });
+    if (!Object.keys(want).length) return 0;
+    readMembers_().forEach(function (m) {
+      if (want[String(m.code).trim().toUpperCase()] && m.active && m.email && m.email.indexOf('@') >= 0) {
+        try { MailApp.sendEmail({ to: m.email, subject: subject, htmlBody: htmlBody }); sent++; } catch (e) {}
+      }
+    });
+  } catch (e) {}
+  return sent;
+}
+function notifyBody_(intro, listHtml) {
+  var deptName = getConfigValue_('DepartmentName', 'Trung Tâm Truyền Thông - Tổ Chức Sự Kiện');
+  var foot = '<p style="margin-top:16px"><a href="' + REMIND_APP_URL + '" style="background:#17479D;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none">Mở phần mềm</a></p><p style="color:#999;font-size:12px">' + remEsc_(deptName) + ' — email tự động, vui lòng không trả lời.</p>';
+  return '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222"><p>' + intro + '</p>' + (listHtml ? ('<ul style="margin:0;padding-left:18px">' + listHtml + '</ul>') : '') + foot + '</div>';
+}
 // Gửi tất cả email nhắc việc. Trả về số email đã gửi.
 function sendTaskReminders_() {
   var today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
@@ -1055,6 +1074,8 @@ function createTask(token, payload) {
       startDate: startDate, needSupport: false, supportNote: '', krId: krId
     };
     tSheet.appendRow(taskToRow_(task));
+    // Email tự động: báo người được giao khi có VIỆC MỚI.
+    try { if (assigneeCodesArr.length) notifyByEmail_(assigneeCodesArr, '📋 Việc mới: ' + title, notifyBody_('Bạn vừa được giao một công việc mới:', '<li><b>' + remEsc_(title) + '</b>' + (deadline ? ' · hạn ' + remFmtDate_(deadline) : '') + ' · ' + remEsc_(priority) + (projectId ? ' · dự án ' + remEsc_(projectId) : '') + '</li>')); } catch (e) {}
     task.projectId = projectId || null;
     return task;
   } finally {
@@ -1362,6 +1383,12 @@ function createProject(token, payload) {
       krId: String(payload.krId || '').trim()
     };
     sh.appendRow(projToRow_(prj));
+    // Email tự động: báo Lead + thành viên khi có DỰ ÁN MỚI.
+    try {
+      var _lead = readMembers_().filter(function (m) { return m.code === prj.leadCode; })[0];
+      notifyByEmail_([prj.leadCode].concat(prj.memberCodes || []), '🚀 Dự án mới: ' + prj.name,
+        notifyBody_('Một dự án mới vừa được tạo và bạn có tham gia:', '<li><b>' + remEsc_(prj.name) + '</b> (mã ' + remEsc_(prj.id) + ')' + (prj.eventDate ? ' · sự kiện ' + remFmtDate_(prj.eventDate) : '') + ' · Lead: ' + remEsc_(_lead ? _lead.name : prj.leadCode) + '</li>'));
+    } catch (e) {}
     return prj;
   } finally {
     lock.releaseLock();
@@ -1420,6 +1447,13 @@ function completeProject(token, id) {
     p.status = PROJ_STATUS.COMPLETED;
     var newRow = projToRow_(p);
     sh.getRange(rowIdx + 1, 1, 1, newRow.length).setValues([newRow]);
+    // Email tự động: DỰ ÁN HOÀN THÀNH -> báo TẤT CẢ người trong dự án (Lead + thành viên + mọi người thực hiện task, gồm cả Phòng lẫn Production Crew).
+    try {
+      var recips = {}; recips[p.leadCode] = 1; (p.memberCodes || []).forEach(function (c) { recips[c] = 1; });
+      readTasks_().forEach(function (t) { if (t.projectId === id) taskAssignees_(t).forEach(function (c) { recips[c] = 1; }); });
+      notifyByEmail_(Object.keys(recips), '✅ Dự án hoàn thành: ' + p.name,
+        notifyBody_('Dự án <b>' + remEsc_(p.name) + '</b> (mã ' + remEsc_(p.id) + ') đã được đánh dấu <b>HOÀN THÀNH</b>. Cảm ơn tất cả nhân sự Phòng và Production Crew đã tham gia!', ''));
+    } catch (e) {}
     return p;
   } finally {
     lock.releaseLock();
